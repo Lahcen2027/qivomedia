@@ -25,6 +25,8 @@ pub fn routes() -> Router<AppState> {
         .route("/platform/orgs", get(list_orgs).post(create_org))
         .route("/platform/orgs/{id}", patch(update_org).delete(delete_org))
         .route("/platform/ai-usage", get(ai_usage))
+        .route("/platform/orgs/{id}/users", get(org_users))
+        .route("/platform/users/{id}/reset-mfa", axum::routing::post(reset_user_mfa))
 }
 
 pub fn month_start() -> String {
@@ -259,4 +261,59 @@ async fn ai_usage(State(state): State<AppState>, user: AuthUser) -> AppResult<Js
     .fetch_all(&state.db)
     .await?;
     Ok(Json(rows))
+}
+
+
+// ------------------------------------------------------------ account recovery for customers
+
+#[derive(Serialize, sqlx::FromRow)]
+struct OrgUser {
+    id: String,
+    name: String,
+    email: String,
+    role: String,
+    mfa_enabled: bool,
+    last_active: Option<String>,
+}
+
+async fn org_users(State(state): State<AppState>, user: AuthUser, Path(id): Path<String>) -> AppResult<Json<Vec<OrgUser>>> {
+    user.require_platform()?;
+    let rows = sqlx::query_as::<_, OrgUser>(
+        "SELECT u.id, u.name, u.email, u.role, u.mfa_enabled,
+                (SELECT MAX(last_used_at) FROM sessions s WHERE s.user_id = u.id) AS last_active
+           FROM users u WHERE u.org_id = ? ORDER BY CASE u.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END, u.name",
+    )
+    .bind(&id)
+    .fetch_all(&state.db)
+    .await?;
+    Ok(Json(rows))
+}
+
+#[derive(Deserialize)]
+struct ResetMfaReq {
+    /// How the person's identity was verified — kept in both audit logs.
+    reason: String,
+}
+
+/// Lost-phone recovery for a customer whose organization has no other admin who can help.
+async fn reset_user_mfa(State(state): State<AppState>, user: AuthUser, Path(id): Path<String>, Json(r): Json<ResetMfaReq>) -> AppResult<Json<Value>> {
+    user.require_platform()?;
+    if !user.0.mfa_enabled {
+        return Err(AppError::Forbidden("turn on two-factor authentication for your own account before resetting someone else's".into()));
+    }
+    if id == user.0.id {
+        return Err(AppError::BadRequest("you can't reset your own 2FA here — use the server command `qivo-server reset-mfa <email>`".into()));
+    }
+    let reason = r.reason.trim();
+    if reason.chars().count() < 10 {
+        return Err(AppError::BadRequest("describe how you verified this person's identity (at least 10 characters)".into()));
+    }
+    let (email, name, org) = crate::mfa::reset_for_user(&state.db, &id).await?;
+    let detail = format!("{email} — by platform admin {} — {}", user.0.email, reason.chars().take(300).collect::<String>());
+    audit(&state, &org, Some(&user.0.id), "auth.mfa_reset_by_platform", &detail).await;
+    if org != user.org() {
+        audit(&state, user.org(), Some(&user.0.id), "platform.mfa_reset", &detail).await;
+    }
+    crate::mfa::notify_reset(&email, &name, "Qivomedia support (platform administrator)").await;
+    Ok(Json(json!({ "ok": true, "email": email })))
 }

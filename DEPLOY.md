@@ -184,5 +184,6 @@ qivo start qivomedia
 | Upload fails for big videos | Check free disk space with `df -h`. |
 | Forgot a password | Use **Forgot your password?** on the sign-in page. Without email set up, copy the link from `qivo logs qivomedia`. |
 | "Too many failed attempts" | The account locks for 15 minutes after 5 wrong passwords. Wait, or reset the password. |
-| Lost phone with 2FA | Use one of the recovery codes on the code screen, or ask an admin to click **Reset 2FA** next to your name in Team. |
+| Lost phone with 2FA | Use one of the recovery codes on the code screen, or ask an admin to click **Reset 2FA** next to your name in Team. If the person is their organization's only admin, the platform admin can reset it under **Customers & usage → Users**. |
+| Platform admin lost their 2FA phone | On the server: `qivo exec qivomedia qivo-server reset-mfa you@example.com`, then sign in with your password and set 2FA up again. |
 | Signed out unexpectedly | Sessions end after 12 hours without activity (`QIVO_SESSION_IDLE_HOURS`), or when someone signs out your other sessions. |

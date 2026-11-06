@@ -19,6 +19,13 @@ Controls are grouped by the [OWASP ASVS](https://owasp.org/www-project-applicati
   - A password-reset link never signs in an account that has 2FA. The person still has to enter their password and a code.
 - **Brute force:** an account locks for 15 minutes after 5 failed sign-ins, and an IP address after 30. Sign-up, password reset, token checks, 2FA steps, screen registration and webhooks are all rate-limited.
 - **Account recovery:** reset links work once, expire after 1 hour (invitations after 7 days), and are stored only as hashes. The reply is the same whether or not an account exists.
+- **Lost 2FA device:** there are four ways back in, from most to least common:
+  1. a recovery code, used in place of the 6-digit code;
+  2. an admin of the same organization clicks **Reset 2FA** in Team;
+  3. the platform operator resets it from **Customers & usage → Users**. The operator must have 2FA on, can't reset their own, and must write down how they verified the person's identity. That reason goes into both the customer's and the operator's audit log;
+  4. someone with access to the server runs `qivo-server reset-mfa <email>`. This is the last resort, and the only way to recover the platform admin.
+
+  Every reset signs the person out everywhere, invalidates their old authenticator and recovery codes, and emails them, so a reset they didn't ask for doesn't go unnoticed.
 
 ### Sessions (V3)
 - The session token sits only in an **HttpOnly cookie**, so JavaScript can't read it and a script-injection (XSS) bug can't steal it. Over HTTPS the cookie is named `__Host-qivo_session` (Secure, host-bound, `Path=/`), and it's always `SameSite=Strict`.
@@ -42,7 +49,7 @@ Controls are grouped by the [OWASP ASVS](https://owasp.org/www-project-applicati
 - Cross-origin requests (CORS) aren't enabled. The website reaches the app through the same origin.
 
 ### Logging (V7)
-The audit log records sign-ins (with IP address and browser), failed sign-ins, 2FA being turned on or off, recovery-code use, admin 2FA resets, session sign-outs, password changes, role changes and alerts. Admins see it under **Team & audit**.
+The audit log records sign-ins (with IP address and browser), failed sign-ins, 2FA being turned on or off, recovery-code use, 2FA resets (by an admin, the platform operator or a server command, with who did it and why), session sign-outs, password changes, role changes and alerts. Admins see it under **Team & audit**.
 
 ### Infrastructure and supply chain (V10, V14)
 - **Containers:**

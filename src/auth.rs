@@ -142,13 +142,17 @@ fn verify_password(pw: &str, hash: &str) -> bool {
 }
 
 pub async fn audit(state: &AppState, org_id: &str, user_id: Option<&str>, action: &str, detail: &str) {
+    audit_db(&state.db, org_id, user_id, action, detail).await
+}
+
+pub async fn audit_db(db: &sqlx::SqlitePool, org_id: &str, user_id: Option<&str>, action: &str, detail: &str) {
     let _ = sqlx::query("INSERT INTO audit_log (org_id, user_id, action, detail, created_at) VALUES (?,?,?,?,?)")
         .bind(org_id)
         .bind(user_id)
         .bind(action)
         .bind(detail)
         .bind(now())
-        .execute(&state.db)
+        .execute(db)
         .await;
 }
 
@@ -419,10 +423,9 @@ async fn update_user(
         if is_self {
             return Err(AppError::BadRequest("use Security settings to change your own two-factor authentication".into()));
         }
-        sqlx::query("UPDATE users SET mfa_enabled = 0, mfa_secret = NULL, mfa_pending_secret = NULL, mfa_recovery = '[]' WHERE id = ?")
-            .bind(&id).execute(&state.db).await?;
-        sqlx::query("DELETE FROM sessions WHERE user_id = ?").bind(&id).execute(&state.db).await?;
-        audit(&state, user.org(), Some(&user.0.id), "auth.mfa_reset_by_admin", &id).await;
+        let (email, name, _) = crate::mfa::reset_for_user(&state.db, &id).await?;
+        audit(&state, user.org(), Some(&user.0.id), "auth.mfa_reset_by_admin", &email).await;
+        crate::mfa::notify_reset(&email, &name, &format!("{}, an administrator of your organization", user.0.name)).await;
     }
     if let Some(pw) = &req.password {
         let (email, name): (String, String) = sqlx::query_as("SELECT email, name FROM users WHERE id = ?").bind(&id).fetch_one(&state.db).await?;

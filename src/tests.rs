@@ -458,3 +458,76 @@ async fn uploads_are_checked_by_content_and_active_files_are_sandboxed() {
     let csp = res.headers().get("content-security-policy").unwrap().to_str().unwrap();
     assert!(csp.starts_with("sandbox"), "SVG is served sandboxed: {csp}");
 }
+
+#[tokio::test]
+async fn platform_admin_can_recover_a_customer_who_lost_their_phone() {
+    let t = setup("10.1.0.7").await;
+    let (op, _) = t.signup("operator@test.ma").await;
+    t.req("POST", "/api/platform/orgs", Some(&op), Some(json!({
+        "org_name": "Faculty", "owner_name": "Salma", "owner_email": "salma@fs.ma", "owner_password": "river stone garden", "plan": "pilot" }))).await;
+    // Customer owner turns on 2FA, then "loses the phone".
+    let cust = t.login_token("salma@fs.ma", "river stone garden").await;
+    let cs = t.req("POST", "/api/auth/mfa/setup", Some(&cust), None).await.1["secret"].as_str().unwrap().to_string();
+    assert_eq!(t.req("POST", "/api/auth/mfa/enable", Some(&cust), Some(json!({ "code": totp_code(&cs, unix_now()) }))).await.0, StatusCode::OK);
+    let (_, cme) = t.req("GET", "/api/auth/me", Some(&cust), None).await;
+    let cust_id = cme["user"]["id"].as_str().unwrap().to_string();
+    let org_id = cme["user"]["org_id"].as_str().unwrap().to_string();
+
+    // The operator must protect their own account first.
+    let (s, _) = t.req("POST", &format!("/api/platform/users/{cust_id}/reset-mfa"), Some(&op), Some(json!({ "reason": "Called her on the contract number" }))).await;
+    assert_eq!(s, StatusCode::FORBIDDEN);
+    let os = t.req("POST", "/api/auth/mfa/setup", Some(&op), None).await.1["secret"].as_str().unwrap().to_string();
+    t.req("POST", "/api/auth/mfa/enable", Some(&op), Some(json!({ "code": totp_code(&os, unix_now()) }))).await;
+
+    let (_, users) = t.req("GET", &format!("/api/platform/orgs/{org_id}/users"), Some(&op), None).await;
+    assert_eq!(users[0]["email"], "salma@fs.ma");
+    assert_eq!(users[0]["mfa_enabled"], true);
+    assert_eq!(t.req("POST", &format!("/api/platform/users/{cust_id}/reset-mfa"), Some(&op), Some(json!({ "reason": "ok" }))).await.0, StatusCode::BAD_REQUEST, "a real reason is required");
+    let (s, v) = t.req("POST", &format!("/api/platform/users/{cust_id}/reset-mfa"), Some(&op), Some(json!({ "reason": "Called her on the number in our contract" }))).await;
+    assert_eq!(s, StatusCode::OK, "{v}");
+
+    // Old sessions are gone, password alone signs in again, she was told, and it's in her org's audit log.
+    assert_eq!(t.req("GET", "/api/auth/me", Some(&cust), None).await.0, StatusCode::UNAUTHORIZED);
+    let (s, l) = t.login("salma@fs.ma", "river stone garden").await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(l.get("mfa_required").is_none());
+    assert!(mail::unsent().iter().any(|m| m.to == "salma@fs.ma" && m.subject.contains("two-factor authentication was reset")));
+    let logged: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM audit_log WHERE org_id = ? AND action = 'auth.mfa_reset_by_platform' AND detail LIKE '%contract%'")
+        .bind(&org_id).fetch_one(&t.db).await.unwrap();
+    assert_eq!(logged, 1);
+
+    // Not for yourself, and not for customers' own admins.
+    let (_, ome) = t.req("GET", "/api/auth/me", Some(&op), None).await;
+    let op_id = ome["user"]["id"].as_str().unwrap();
+    assert_eq!(t.req("POST", &format!("/api/platform/users/{op_id}/reset-mfa"), Some(&op), Some(json!({ "reason": "I lost my own phone today" }))).await.0, StatusCode::BAD_REQUEST);
+    let cust2 = t.login_token("salma@fs.ma", "river stone garden").await;
+    assert_eq!(t.req("GET", &format!("/api/platform/orgs/{org_id}/users"), Some(&cust2), None).await.0, StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn organization_admin_reset_notifies_the_member() {
+    let t = setup("10.1.0.8").await;
+    let (owner, _) = t.signup("own@test.ma").await;
+    let (_, u) = t.req("POST", "/api/users", Some(&owner), Some(json!({ "email": "yassine@test.ma", "name": "Yassine", "role": "editor", "password": "copper kettle dawn" }))).await;
+    let member = t.login_token("yassine@test.ma", "copper kettle dawn").await;
+    let ms = t.req("POST", "/api/auth/mfa/setup", Some(&member), None).await.1["secret"].as_str().unwrap().to_string();
+    t.req("POST", "/api/auth/mfa/enable", Some(&member), Some(json!({ "code": totp_code(&ms, unix_now()) }))).await;
+    let uid = u["id"].as_str().unwrap();
+    assert_eq!(t.req("PATCH", &format!("/api/users/{uid}"), Some(&owner), Some(json!({ "reset_mfa": true }))).await.0, StatusCode::OK);
+    assert_eq!(t.req("GET", "/api/auth/me", Some(&member), None).await.0, StatusCode::UNAUTHORIZED);
+    assert!(mail::unsent().iter().any(|m| m.to == "yassine@test.ma" && m.text.contains("administrator of your organization")));
+}
+
+#[tokio::test]
+async fn server_side_reset_works_for_anyone_including_the_platform_admin() {
+    let t = setup("10.1.0.9").await;
+    let (op, me) = t.signup("root@test.ma").await;
+    let s = t.req("POST", "/api/auth/mfa/setup", Some(&op), None).await.1["secret"].as_str().unwrap().to_string();
+    t.req("POST", "/api/auth/mfa/enable", Some(&op), Some(json!({ "code": totp_code(&s, unix_now()) }))).await;
+    // What `qivo-server reset-mfa root@test.ma` runs.
+    let (email, _, _) = crate::mfa::reset_for_user(&t.db, me["id"].as_str().unwrap()).await.unwrap();
+    assert_eq!(email, "root@test.ma");
+    let (s, l) = t.login("root@test.ma", "correct-horse").await;
+    assert_eq!(s, StatusCode::OK);
+    assert!(l.get("mfa_required").is_none());
+}

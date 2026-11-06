@@ -277,6 +277,36 @@ async fn verify(State(state): State<AppState>, headers: HeaderMap, Json(r): Json
     Ok(with_session(cookie, json!({ "user": user })))
 }
 
+// ------------------------------------------------------------ recovery (lost phone)
+
+/// Remove a user's authenticator and recovery codes and sign them out everywhere.
+/// Used by organization admins, the platform admin, and the `reset-mfa` server command.
+/// Returns (email, name, org_id).
+pub async fn reset_for_user(db: &sqlx::SqlitePool, user_id: &str) -> AppResult<(String, String, String)> {
+    let row: Option<(String, String, String)> = sqlx::query_as("SELECT email, name, org_id FROM users WHERE id = ?")
+        .bind(user_id).fetch_optional(db).await?;
+    let (email, name, org) = row.ok_or(AppError::NotFound)?;
+    let mut tx = db.begin().await?;
+    sqlx::query("UPDATE users SET mfa_enabled = 0, mfa_secret = NULL, mfa_pending_secret = NULL, mfa_recovery = '[]', mfa_last_step = 0 WHERE id = ?")
+        .bind(user_id).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM sessions WHERE user_id = ?").bind(user_id).execute(&mut *tx).await?;
+    tx.commit().await?;
+    ratelimit::reset(&format!("login:acct:{email}"));
+    Ok((email, name, org))
+}
+
+/// Tell the person their 2FA was reset, so an unexpected reset doesn't go unnoticed.
+pub async fn notify_reset(email: &str, name: &str, by: &str) {
+    let text = format!(
+        "Hello {name},\n\nTwo-factor authentication on your Qivomedia account was reset by {by}, and you were signed out everywhere.\n\nNext time you sign in with your password you can set it up again with your new phone.\n\nIf you did not ask for this, contact your administrator immediately and change your password.\n"
+    );
+    let html = format!(
+        "<p>Hello {},</p><p>Two-factor authentication on your Qivomedia account was <b>reset by {}</b>, and you were signed out everywhere.</p><p>Next time you sign in with your password you can set it up again with your new phone.</p><p style=\"color:#8a1c1c\"><b>If you did not ask for this</b>, contact your administrator immediately and change your password.</p>",
+        crate::mail::esc(name), crate::mail::esc(by)
+    );
+    let _ = crate::mail::send(email, "Your two-factor authentication was reset", &text, &html).await;
+}
+
 // ------------------------------------------------------------ organization policy
 
 async fn org_security(State(state): State<AppState>, user: AuthUser) -> AppResult<Json<Value>> {

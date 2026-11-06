@@ -76,11 +76,15 @@ async fn main() -> anyhow::Result<()> {
             let email = args.get(2).ok_or_else(|| anyhow::anyhow!("usage: qivo-server make-admin <email>"))?;
             return make_admin(&data_dir, email).await;
         }
+        Some("reset-mfa") => {
+            let email = args.get(2).ok_or_else(|| anyhow::anyhow!("usage: qivo-server reset-mfa <email>"))?;
+            return reset_mfa_cli(&data_dir, email).await;
+        }
         Some("--version") | Some("version") => {
             println!("qivo-server {}", env!("CARGO_PKG_VERSION"));
             return Ok(());
         }
-        Some(other) if !other.starts_with('-') => anyhow::bail!("unknown command '{other}' (use: healthcheck | backup [file] | make-admin <email> | version)"),
+        Some(other) if !other.starts_with('-') => anyhow::bail!("unknown command '{other}' (use: healthcheck | backup [file] | make-admin <email> | reset-mfa <email> | version)"),
         _ => {}
     }
     let allow_signup = std::env::var("QIVO_ALLOW_SIGNUP").map(|v| v == "1" || v == "true").unwrap_or(false);
@@ -202,6 +206,25 @@ async fn make_admin(data_dir: &std::path::Path, email: &str) -> anyhow::Result<(
         anyhow::bail!("no user with email {email}");
     }
     println!("{email} is now a platform admin");
+    Ok(())
+}
+
+/// Last-resort 2FA recovery, run on the server itself (access to the server proves
+/// authority). Works for anyone, including the platform admin.
+async fn reset_mfa_cli(data_dir: &std::path::Path, email: &str) -> anyhow::Result<()> {
+    let db_url = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| format!("sqlite://{}", data_dir.join("qivo.db").display()));
+    let db = SqlitePoolOptions::new().max_connections(1).connect_with(SqliteConnectOptions::from_str(&db_url)?.foreign_keys(true)).await?;
+    sqlx::migrate!("./migrations").run(&db).await?;
+    let email = email.trim().to_lowercase();
+    let id: Option<String> = sqlx::query_scalar("SELECT id FROM users WHERE email = ?").bind(&email).fetch_optional(&db).await?;
+    let id = id.ok_or_else(|| anyhow::anyhow!("no user with email {email}"))?;
+    let (email, name, org) = mfa::reset_for_user(&db, &id).await.map_err(|e| anyhow::anyhow!("{e}"))?;
+    let host = std::env::var("HOSTNAME").unwrap_or_else(|_| "the server".into());
+    auth::audit_db(&db, &org, None, "auth.mfa_reset_by_server", &format!("{email} — via `qivo-server reset-mfa` on {host}")).await;
+    mfa::notify_reset(&email, &name, "a server administrator").await;
+    println!("Two-factor authentication reset for {email}.");
+    println!("They were signed out everywhere and can sign in with their password, then set up 2FA again.");
     Ok(())
 }
 

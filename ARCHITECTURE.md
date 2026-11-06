@@ -80,7 +80,7 @@ CMS, web player, pairing, layouts/zones, playlists/widgets, scheduling, triggers
 - Test suite: 16 tests, including 12 in-process API tests on fresh databases. GitHub Actions CI runs the tests, JS syntax checks, the site build and compose validation, then builds the Docker image, checks it starts healthy and backs up, and validates both Caddyfiles with the real Caddy.
 
 **Phase 1.9 — built (v0.6): security hardening**
-- **Two-factor authentication:** TOTP with QR enrollment, 10 hashed recovery codes and replay protection. Organizations can require it, enforced on the server. A reset link can't bypass 2FA, and admins can reset a member's 2FA.
+- **Two-factor authentication:** TOTP with QR enrollment, 10 hashed recovery codes and replay protection. Organizations can require it, enforced on the server. A reset link can't bypass 2FA. A lost device can be recovered by an organization admin, by the platform operator (with an identity-check reason logged in both audit logs), or by `qivo-server reset-mfa` on the server. Every reset emails the person.
 - **Cookie sessions:** HttpOnly, SameSite=Strict, `__Host-` over HTTPS. No tokens in localStorage, URLs or WebSocket query strings. Sessions expire after 12 hours idle (configurable) and 30 days at most, and each person can list and revoke them.
 - **CSRF guard:** Origin and Sec-Fetch-Site checks on cookie-authenticated writes. The permissive CORS setting is gone.
 - **Content Security Policy** per area (strict dashboard with no inline script, player, API, files). Uploaded HTML, SVG and XML are served with `CSP: sandbox`, and uploads are identified by their content with `infer`. Also COOP, CORP, Permissions-Policy, HSTS, `no-store` on the API, and `security.txt`.
