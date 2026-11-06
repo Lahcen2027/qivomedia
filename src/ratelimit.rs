@@ -54,11 +54,13 @@ pub fn reset(key: &str) {
     store().lock().unwrap().remove(key);
 }
 
-/// Client IP as seen by the reverse proxy (Caddy sets X-Forwarded-For).
+/// Client IP as seen by our reverse proxy. Caddy appends the address it actually saw
+/// as the *last* X-Forwarded-For entry; earlier entries can be forged by the client,
+/// so only the rightmost one is trusted.
 pub fn client_ip(h: &HeaderMap) -> String {
     h.get("x-forwarded-for")
         .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.split(',').next())
+        .and_then(|v| v.rsplit(',').next())
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "local".into())
@@ -79,6 +81,9 @@ mod tests {
         assert!(allow("rl:test:b", 3, MIN));
         hit("rl:test:c");
         hit("rl:test:c");
+        let mut h = HeaderMap::new();
+        h.insert("x-forwarded-for", "6.6.6.6, 203.0.113.9".parse().unwrap());
+        assert_eq!(client_ip(&h), "203.0.113.9", "forged leading entries are ignored");
         assert!(exceeded("rl:test:c", 2, MIN));
         reset("rl:test:c");
         assert!(!exceeded("rl:test:c", 2, MIN));

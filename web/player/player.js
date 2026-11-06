@@ -4,7 +4,6 @@ import { activeLayouts, itemPlayable, fillTemplate } from "/shared/schedule.js";
 
 const qs = new URLSearchParams(location.search);
 const PREVIEW = qs.get("preview");
-const PREVIEW_TOKEN = qs.get("token");
 const DEMO = qs.has("demo"); // website hero: public demo layout, no pairing, no reporting
 const LS = { key: "qivo.device_key", id: "qivo.display_id", manifest: "qivo.manifest", pop: "qivo.pop_queue" };
 const viewport = document.getElementById("viewport");
@@ -26,9 +25,9 @@ const deviceKey = () => localStorage.getItem(LS.key);
 
 async function api(path, opts = {}) {
   const headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
-  if (PREVIEW_TOKEN) headers.Authorization = `Bearer ${PREVIEW_TOKEN}`;
-  else if (deviceKey() && !DEMO) headers["X-Device-Key"] = deviceKey();
-  const res = await fetch(path, { ...opts, headers });
+  // Preview mode is authenticated by the dashboard's session cookie (same origin).
+  if (deviceKey() && !DEMO && !PREVIEW) headers["X-Device-Key"] = deviceKey();
+  const res = await fetch(path, { ...opts, headers, credentials: "same-origin" });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) { const e = new Error(body.error || res.statusText); e.status = res.status; throw e; }
   return body;

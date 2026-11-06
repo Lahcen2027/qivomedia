@@ -1,7 +1,7 @@
 // Core helpers shared by all dashboard pages.
 
 export const store = {
-  token: localStorage.getItem("qivo.token"),
+  // The session lives in an HttpOnly cookie that JavaScript cannot read.
   me: null,
   cache: {},
 };
@@ -11,8 +11,8 @@ export const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&a
 export async function api(path, opts = {}) {
   const headers = { ...(opts.headers || {}) };
   if (!(opts.body instanceof FormData) && opts.body !== undefined) headers["Content-Type"] = "application/json";
-  if (store.token) headers.Authorization = `Bearer ${store.token}`;
   const res = await fetch(`/api${path}`, {
+    credentials: "same-origin",
     ...opts,
     headers,
     body: opts.body === undefined || opts.body instanceof FormData || typeof opts.body === "string" ? opts.body : JSON.stringify(opts.body),
@@ -26,18 +26,12 @@ export async function api(path, opts = {}) {
   return body;
 }
 
-export function setToken(t) {
-  store.token = t;
-  if (t) localStorage.setItem("qivo.token", t);
-  else localStorage.removeItem("qivo.token");
-}
+// Older versions kept the token in localStorage; remove any leftover copy.
+try { localStorage.removeItem("qivo.token"); } catch {}
 
 export function logout() {
-  if (store.token) fetch("/api/auth/logout", { method: "POST", headers: { Authorization: `Bearer ${store.token}` } }).catch(() => {});
-  setToken(null);
-  store.me = null;
-  location.hash = "#/login";
-  location.reload();
+  const done = () => { store.me = null; location.hash = "#/login"; location.reload(); };
+  fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" }).then(done, done);
 }
 
 export function toast(msg, err = false, ms) {

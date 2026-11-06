@@ -107,7 +107,10 @@ Then run `qivo up -d`.
 - So that your emails don't land in spam, add your provider's **SPF and DKIM** records to your domain's DNS. Every provider documents the exact records.
 - **Without email**, everything still works. Reset links are written to the log (`qivo logs qivomedia | grep reset`), and you can add team members with a temporary password instead of an invitation.
 
-**Security built in:** an account locks for 15 minutes after 5 wrong passwords. Reset links are single-use and expire after 1 hour (7 days for invitations). Changing or resetting a password signs that person out everywhere else. Sign-ups, reset requests, screen registrations and webhooks are all rate-limited.
+**Security built in:** see [SECURITY.md](SECURITY.md) for the full list. After installing, we recommend three things:
+1. Turn on **two-factor authentication** for your own account under **Team & audit → Security**.
+2. Tick **Require two-factor authentication for every member**.
+3. Set `QIVO_SECURITY_CONTACT` in `deploy/.env` so researchers know where to report issues.
 
 ## 10. Website + app on qivomedia.com (SaaS mode)
 
@@ -181,3 +184,5 @@ qivo start qivomedia
 | Upload fails for big videos | Check free disk space with `df -h`. |
 | Forgot a password | Use **Forgot your password?** on the sign-in page. Without email set up, copy the link from `qivo logs qivomedia`. |
 | "Too many failed attempts" | The account locks for 15 minutes after 5 wrong passwords. Wait, or reset the password. |
+| Lost phone with 2FA | Use one of the recovery codes on the code screen, or ask an admin to click **Reset 2FA** next to your name in Team. |
+| Signed out unexpectedly | Sessions end after 12 hours without activity (`QIVO_SESSION_IDLE_HOURS`), or when someone signs out your other sessions. |

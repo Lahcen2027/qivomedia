@@ -42,7 +42,12 @@ Server commands: `qivo-server healthcheck` · `qivo-server backup [file]` · `qi
 - **Seamless playback**: each item is revealed only once it's decoded or actually playing, so there's no black flash between videos.
 - **AI layout agent** (optional, Anthropic API key): describe a screen in plain words, in French, Arabic or English, and get a real, editable layout with zones, designed slides, a clock, weather and a ticker. Ask for changes in the designer. Results are drafts until a person assigns them. Usage is metered per organization.
 - **Platform admin** for the SaaS owner: create customer organizations, set plans, screen limits and AI allowances, suspend or reactivate customers, and see usage across the platform.
-- **Accounts and security**: invitations by email, password reset, a 15-minute lockout after 5 failed logins, rate limits, single-use expiring links, sign-out everywhere on password change, and security headers.
+- **Security** (see [SECURITY.md](SECURITY.md)):
+  - **Two-factor authentication** with an authenticator app and recovery codes. Organizations can require it for everyone.
+  - **Sessions** live in an HttpOnly, SameSite=Strict cookie that page scripts can't read, with CSRF protection, sign-out after inactivity, and a list of active sessions you can revoke.
+  - **Passwords** follow NIST 800-63B and are checked against known breaches. Accounts lock after repeated failed sign-ins.
+  - **Browser and file protections:** a strict Content Security Policy, sandboxed uploaded HTML and SVG, uploads identified by their content, and modern security headers.
+  - **Infrastructure:** read-only, unprivileged containers. CI checks dependencies with cargo-audit and the image with Trivy, and produces an SBOM. Dependabot keeps dependencies up to date.
 - **Proof of play**: the device records every play, even offline, and syncs it later. Reports break plays down by day, content and screen, and export to CSV.
 
 ## Tests

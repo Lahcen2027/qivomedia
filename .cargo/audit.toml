@@ -1,0 +1,8 @@
+# cargo-audit configuration. Every ignore needs a reason and a re-check date.
+[advisories]
+ignore = [
+    # rsa (Marvin timing attack, no fix released). Present in Cargo.lock only because
+    # sqlx lists its MySQL driver; Qivomedia uses SQLite and never compiles rsa:
+    # `cargo tree -i rsa -e normal` prints nothing. Re-check when moving to Postgres/MySQL.
+    "RUSTSEC-2023-0071",
+]

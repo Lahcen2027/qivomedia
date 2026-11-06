@@ -1,4 +1,5 @@
-import { api, store, setToken, logout, h, esc, toast, ICON, formData, can } from "./core.js";
+import { api, store, logout, h, esc, toast, ICON, formData, can } from "./core.js";
+import { mfaChallenge, mfaForcedSetup } from "./pages/security.js";
 import * as overview from "./pages/overview.js";
 import * as displays from "./pages/displays.js";
 import * as media from "./pages/media.js";
@@ -48,6 +49,7 @@ const NAV = [
 // ---------- auth screens ----------
 async function authScreen() {
   const st = await api("/auth/status");
+  if (store.me) return; // signed in while this was loading
   const signup = st.needs_setup || location.hash === "#/signup";
   app.innerHTML = "";
   const card = h(`<div class="auth"><form class="card">
@@ -57,7 +59,7 @@ async function authScreen() {
     ${signup ? `<div class="field"><label>Organization</label><input name="org_name" required placeholder="Acme Retail"></div>
                 <div class="field"><label>Your name</label><input name="name" required></div>` : ""}
     <div class="field"><label>Email</label><input name="email" type="email" required autocomplete="username"></div>
-    <div class="field"><label>Password</label><input name="password" type="password" required minlength="8" autocomplete="${signup ? "new-password" : "current-password"}"></div>
+    <div class="field"><label>Password</label><input name="password" type="password" required ${signup ? 'minlength="12"' : ""} autocomplete="${signup ? "new-password" : "current-password"}">${signup ? `<div class="small faint" style="margin-top:4px">At least 12 characters. A short phrase of 3–4 words is strong and easy to remember.</div>` : ""}</div>
     <button class="btn primary" style="width:100%;justify-content:center;padding:10px">${signup ? "Create workspace" : "Sign in"}</button>
     ${!signup ? `<p class="small" style="text-align:center;margin:14px 0 0"><a href="#/forgot">Forgot your password?</a></p>` : ""}
     ${!st.needs_setup && st.allow_signup ? `<p class="small muted" style="text-align:center;margin:10px 0 0">${signup ? `<a href="#/login">Have an account? Sign in</a>` : `<a href="#/signup">Create a new workspace</a>`}</p>` : ""}
@@ -69,7 +71,7 @@ async function authScreen() {
     btn.disabled = true;
     try {
       const r = await api(signup ? "/auth/signup" : "/auth/login", { method: "POST", body: formData(e.target) });
-      setToken(r.token);
+      if (r.mfa_required) return mfaChallenge(app, r.ticket, () => { location.hash = "#/"; start(); });
       location.hash = "#/";
       start();
     } catch (err) {
@@ -119,19 +121,22 @@ async function resetScreen() {
   const invite = info.purpose === "invite";
   const f = authCard(`<h1 style="margin-bottom:4px">${invite ? `Welcome, ${esc(info.name)}` : "Choose a new password"}</h1>
     <p class="muted" style="margin:0 0 20px">${invite ? "Choose a password to finish setting up your account" : "For"} <b>${esc(info.email)}</b>.</p>
-    <div class="field"><label>New password</label><input name="password" type="password" minlength="8" required autocomplete="new-password"></div>
-    <div class="field"><label>Repeat password</label><input name="password2" type="password" minlength="8" required autocomplete="new-password"></div>
+    <div class="field"><label>New password</label><input name="password" type="password" minlength="12" required autocomplete="new-password"><div class="small faint" style="margin-top:4px">At least 12 characters. A short phrase of 3–4 words works well.</div></div>
+    <div class="field"><label>Repeat password</label><input name="password2" type="password" minlength="12" required autocomplete="new-password"></div>
     <button class="btn primary" style="width:100%;justify-content:center;padding:10px">${invite ? "Create my account" : "Save password and sign in"}</button>`);
   f.password.focus();
   f.onsubmit = async (e) => {
     e.preventDefault();
-    if (f.password.value.length < 8) return toast("Use at least 8 characters", true);
+    if (f.password.value.length < 12) return toast("Use at least 12 characters", true);
     if (f.password.value !== f.password2.value) return toast("The two passwords don't match", true);
     const btn = f.querySelector("button"); btn.disabled = true;
     try {
       const r = await api("/auth/reset", { method: "POST", body: { token, password: f.password.value } });
-      setToken(r.token);
       history.replaceState(null, "", location.pathname + "#/");
+      if (r.signin_required) {
+        toast("Password changed — sign in with your new password and your authenticator code", false, 7000);
+        return authScreen();
+      }
       toast(invite ? "Welcome to Qivomedia" : "Password changed — you're signed in");
       start();
     } catch (err) { toast(err.message, true); btn.disabled = false; }
@@ -188,27 +193,34 @@ async function route() {
 let liveWs;
 function live() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  liveWs = new WebSocket(`${proto}://${location.host}/ws/admin?token=${encodeURIComponent(store.token)}`);
+  liveWs = new WebSocket(`${proto}://${location.host}/ws/admin`); // authenticated by the session cookie
   liveWs.onmessage = (e) => {
     const msg = JSON.parse(e.data);
     window.dispatchEvent(new CustomEvent("qivo:live", { detail: msg }));
     if (msg.type === "trigger_fired") toast(`Trigger fired on ${msg.displays} screen(s)`);
     if (msg.type === "alert_started" || msg.type === "alert_cleared") alerts.refreshAlertBar();
   };
-  liveWs.onclose = () => setTimeout(() => store.token && live(), 3000);
+  liveWs.onclose = () => setTimeout(() => store.me && live(), 3000);
 }
 
-async function start() {
+let booting = null;
+function start() {
+  // One boot at a time: a hash change during sign-in must not re-show the login screen.
+  booting = boot().finally(() => { booting = null; });
+  return booting;
+}
+
+async function boot() {
   const hash = location.hash;
   if (hash.startsWith("#/reset")) return resetScreen();
-  if (hash.startsWith("#/forgot") && !store.token) return forgotScreen();
-  if (!store.token) return authScreen();
+  if (hash.startsWith("#/forgot")) return forgotScreen();
   try {
     store.me = await api("/auth/me");
   } catch {
-    setToken(null);
+    store.me = null;
     return authScreen();
   }
+  if (store.me.user.mfa_setup_required) return mfaForcedSetup(app, () => start());
   shell();
   live();
   route();
@@ -216,6 +228,7 @@ async function start() {
 }
 
 window.addEventListener("hashchange", () => {
+  if (booting) return;
   if (location.hash.startsWith("#/reset") || (!store.me && location.hash.startsWith("#/forgot"))) return start();
   return store.me ? route() : authScreen();
 });

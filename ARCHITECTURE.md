@@ -49,7 +49,12 @@ POS / sensors / Zapier ──► POST /api/hooks/<secret>  → interrupt targete
 
 **Data model** (`migrations/0001_init.sql`): organizations, users, sessions, media, playlists (items JSON), layouts (regions JSON), display_groups, displays, schedules, triggers, proof_of_play, audit_log.
 
-**Security:** Argon2id passwords. Session tokens are random, 48 characters, and stored only as SHA-256. Device keys are stored the same way. Role checks run per handler (viewer < editor < admin < owner). HTML widgets render in sandboxed iframes. Webhook keys are 32-character random secrets.
+**Security:** see `SECURITY.md`. In short:
+- Argon2id passwords under a NIST 800-63B policy with a HIBP breach check.
+- TOTP 2FA with recovery codes and replay protection, which an organization can require for everyone.
+- Sessions in an HttpOnly, SameSite=Strict `__Host-` cookie (stored server-side as SHA-256), with an idle timeout, a list of sessions you can revoke, and CSRF checks through Origin and Fetch Metadata.
+- Content Security Policy per area. Uploads are identified by their content, and uploaded HTML and SVG are served as sandboxed documents.
+- Read-only, capability-free containers. CI runs cargo-audit and Trivy and produces an SBOM. Dependabot keeps dependencies current.
 
 ## 4. Roadmap
 
@@ -74,11 +79,20 @@ CMS, web player, pairing, layouts/zones, playlists/widgets, scheduling, triggers
 - Login lockout (5 failures → 15 minutes per account, ×6 per IP), rate limits on sign-up, reset, token checks, screen registration and webhooks; sign-out of other sessions on password change, and of all sessions on reset; `nosniff`, `Referrer-Policy` and `X-Frame-Options: SAMEORIGIN` headers.
 - Test suite: 16 tests, including 12 in-process API tests on fresh databases. GitHub Actions CI runs the tests, JS syntax checks, the site build and compose validation, then builds the Docker image, checks it starts healthy and backs up, and validates both Caddyfiles with the real Caddy.
 
+**Phase 1.9 — built (v0.6): security hardening**
+- **Two-factor authentication:** TOTP with QR enrollment, 10 hashed recovery codes and replay protection. Organizations can require it, enforced on the server. A reset link can't bypass 2FA, and admins can reset a member's 2FA.
+- **Cookie sessions:** HttpOnly, SameSite=Strict, `__Host-` over HTTPS. No tokens in localStorage, URLs or WebSocket query strings. Sessions expire after 12 hours idle (configurable) and 30 days at most, and each person can list and revoke them.
+- **CSRF guard:** Origin and Sec-Fetch-Site checks on cookie-authenticated writes. The permissive CORS setting is gone.
+- **Content Security Policy** per area (strict dashboard with no inline script, player, API, files). Uploaded HTML, SVG and XML are served with `CSP: sandbox`, and uploads are identified by their content with `infer`. Also COOP, CORP, Permissions-Policy, HSTS, `no-store` on the API, and `security.txt`.
+- **Password policy** per NIST 800-63B: 12 to 128 characters, a common-password list, no passwords built from your own name, email or organization, and a HIBP k-anonymity check that fails open.
+- **Security audit events** with IP address and browser. The client IP is taken from the rightmost X-Forwarded-For entry only.
+- **Infrastructure:** read-only root filesystem, `cap_drop: ALL`, `no-new-privileges` and a process limit. CI runs cargo-audit (exceptions in `.cargo/audit.toml`) and Trivy, produces an SBOM, and runs weekly. Dependabot covers cargo, Actions and Docker. The workflow token is read-only.
+
 **Phase 2 — Production hardening (next 4–6 weeks)**
 - Postgres backend + S3/R2 media storage + signed URLs; Redis or Postgres LISTEN/NOTIFY so several server instances share the event bus
 - Per-screen timezone; holiday/exception dates; campaigns (ordered layout sets) and share-of-voice
 - Screenshots from players, uptime history, offline alerts (email/Slack/WhatsApp)
-- 2FA (TOTP) for admins; university SSO (see section 5)
+- Passkeys (WebAuthn) for passwordless, phishing-resistant sign-in; university SSO (see section 5); encrypt TOTP secrets at rest
 - Server-side thumbnails + video transcoding (ffmpeg) and image resizing per screen resolution
 - Browser end-to-end tests (Playwright) in CI
 

@@ -4,7 +4,8 @@ use argon2::{
 };
 use axum::{
     extract::{FromRequestParts, Path, State},
-    http::request::Parts,
+    http::{header::SET_COOKIE, request::Parts, HeaderMap},
+    response::{AppendHeaders, IntoResponse, Response},
     routing::{delete, get, post},
     Json, Router,
 };
@@ -13,8 +14,9 @@ use serde_json::{json, Value};
 
 use crate::{
     error::{AppError, AppResult},
-    mail,
+    mail, passwords,
     ratelimit::{self, client_ip, HOUR},
+    session,
     state::AppState,
     util::{new_id, now, random_token, sha256_hex},
 };
@@ -22,8 +24,6 @@ use crate::{
 /// Failed logins allowed per account (and per IP) before a 15-minute lockout.
 const MAX_FAILED: usize = 5;
 const LOCKOUT: std::time::Duration = std::time::Duration::from_secs(15 * 60);
-
-const SESSION_DAYS: i64 = 30;
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct User {
@@ -34,10 +34,16 @@ pub struct User {
     pub role: String,
     pub created_at: String,
     pub platform_admin: bool,
+    #[sqlx(default)]
+    pub mfa_enabled: bool,
+    /// The organization requires 2FA and this user hasn't set it up yet.
+    #[sqlx(default)]
+    pub mfa_setup_required: bool,
 }
 
-/// Authenticated dashboard user, extracted from `Authorization: Bearer <token>`
-/// (or `?token=` for WebSocket upgrades).
+pub const USER_COLS: &str = "id, org_id, email, name, role, created_at, platform_admin, mfa_enabled";
+
+/// Authenticated dashboard user, from the session cookie (or `Authorization: Bearer`).
 #[derive(Debug, Clone)]
 pub struct AuthUser(pub User);
 
@@ -64,42 +70,57 @@ impl AuthUser {
     }
 }
 
+type UserRow = (String, String, String, String, String, String, bool, bool, bool, bool, Option<String>);
+
 pub async fn user_from_token(state: &AppState, token: &str) -> AppResult<User> {
-    let row: Option<(User, bool)> = sqlx::query_as::<_, (String, String, String, String, String, String, bool, bool)>(
-        "SELECT u.id, u.org_id, u.email, u.name, u.role, u.created_at, u.platform_admin, o.suspended
+    let idle_cutoff = (chrono::Utc::now() - chrono::Duration::hours(session::idle_hours()))
+        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    let row: Option<UserRow> = sqlx::query_as(
+        "SELECT u.id, u.org_id, u.email, u.name, u.role, u.created_at, u.platform_admin, u.mfa_enabled,
+                o.suspended, o.require_mfa, s.last_used_at
            FROM sessions s JOIN users u ON u.id = s.user_id JOIN organizations o ON o.id = u.org_id
-          WHERE s.token_hash = ? AND s.expires_at > ?",
+          WHERE s.token_hash = ? AND s.expires_at > ? AND (s.last_used_at IS NULL OR s.last_used_at > ?)",
     )
     .bind(sha256_hex(token))
     .bind(now())
+    .bind(&idle_cutoff)
     .fetch_optional(&state.db)
-    .await?
-    .map(|(id, org_id, email, name, role, created_at, platform_admin, suspended)| {
-        (User { id, org_id, email, name, role, created_at, platform_admin }, suspended)
-    });
-    let (user, suspended) = row.ok_or(AppError::Unauthorized)?;
-    if suspended && !user.platform_admin {
+    .await?;
+    let (id, org_id, email, name, role, created_at, platform_admin, mfa_enabled, suspended, require_mfa, last_used) =
+        row.ok_or(AppError::Unauthorized)?;
+    if suspended && !platform_admin {
         return Err(AppError::Forbidden("this account is suspended — contact your provider".into()));
     }
-    Ok(user)
+    // Sliding idle window; write at most once a minute.
+    let stale = (chrono::Utc::now() - chrono::Duration::seconds(60)).to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    if last_used.map(|l| l < stale).unwrap_or(true) {
+        let _ = sqlx::query("UPDATE sessions SET last_used_at = ? WHERE token_hash = ?").bind(now()).bind(sha256_hex(token)).execute(&state.db).await;
+    }
+    Ok(User { id, org_id, email, name, role, created_at, platform_admin, mfa_enabled, mfa_setup_required: require_mfa && !mfa_enabled })
+}
+
+/// Endpoints a user may reach while their organization still requires them to set up 2FA.
+fn allowed_before_mfa_setup(path: &str) -> bool {
+    let p = path.trim_start_matches("/api");
+    p == "/auth/me" || p == "/auth/logout" || p.starts_with("/auth/mfa/") || p.starts_with("/auth/sessions")
 }
 
 impl FromRequestParts<AppState> for AuthUser {
     type Rejection = AppError;
 
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, Self::Rejection> {
-        let header_token = parts
-            .headers
-            .get(axum::http::header::AUTHORIZATION)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.strip_prefix("Bearer "))
-            .map(str::to_owned);
-        let query_token = parts.uri.query().and_then(|q| {
-            q.split('&').find_map(|kv| kv.strip_prefix("token=").map(str::to_owned))
-        });
-        let token = header_token.or(query_token).ok_or(AppError::Unauthorized)?;
-        Ok(AuthUser(user_from_token(state, &token).await?))
+        let token = session::token_from_headers(&parts.headers).ok_or(AppError::Unauthorized)?;
+        let user = user_from_token(state, &token).await?;
+        if user.mfa_setup_required && !allowed_before_mfa_setup(parts.uri.path()) {
+            return Err(AppError::Forbidden("mfa_setup_required: your organization requires two-factor authentication".into()));
+        }
+        Ok(AuthUser(user))
     }
+}
+
+/// JSON body plus the session cookie.
+pub fn with_session(cookie: axum::http::HeaderValue, body: Value) -> Response {
+    (AppendHeaders([(SET_COOKIE, cookie)]), Json(body)).into_response()
 }
 
 pub fn hash_password(pw: &str) -> AppResult<String> {
@@ -108,6 +129,10 @@ pub fn hash_password(pw: &str) -> AppResult<String> {
         .hash_password(pw.as_bytes(), &salt)
         .map(|h| h.to_string())
         .map_err(|e| AppError::Other(anyhow::anyhow!("hash: {e}")))
+}
+
+pub fn verify_password_pub(pw: &str, hash: &str) -> bool {
+    verify_password(pw, hash)
 }
 
 fn verify_password(pw: &str, hash: &str) -> bool {
@@ -137,6 +162,8 @@ pub fn routes() -> Router<AppState> {
         .route("/auth/forgot", post(forgot))
         .route("/auth/reset", post(reset_password))
         .route("/auth/token-info", post(token_info))
+        .merge(session::routes())
+        .merge(crate::mfa::routes())
         .route("/users", get(list_users).post(create_user))
         .route("/users/{id}", delete(delete_user).patch(update_user))
         .route("/audit", get(list_audit))
@@ -159,30 +186,13 @@ struct SignupReq {
     password: String,
 }
 
-fn validate_credentials(email: &str, password: &str) -> AppResult<()> {
-    if !email.contains('@') || email.len() < 3 {
-        return Err(AppError::BadRequest("valid email required".into()));
-    }
-    if password.len() < 8 {
-        return Err(AppError::BadRequest("password must be at least 8 characters".into()));
-    }
-    Ok(())
+fn validate_email(email: &str) -> AppResult<()> {
+    let ok = email.len() <= 200 && email.split_once('@').map(|(a, d)| !a.is_empty() && d.contains('.')).unwrap_or(false);
+    if ok { Ok(()) } else { Err(AppError::BadRequest("valid email required".into())) }
 }
 
-async fn create_session(state: &AppState, user_id: &str) -> AppResult<String> {
-    let token = random_token(48);
-    let exp = (chrono::Utc::now() + chrono::Duration::days(SESSION_DAYS))
-        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
-    sqlx::query("INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?,?,?)")
-        .bind(sha256_hex(&token))
-        .bind(user_id)
-        .bind(exp)
-        .execute(&state.db)
-        .await?;
-    Ok(token)
-}
 
-async fn signup(State(state): State<AppState>, headers: axum::http::HeaderMap, Json(req): Json<SignupReq>) -> AppResult<Json<Value>> {
+async fn signup(State(state): State<AppState>, headers: HeaderMap, Json(req): Json<SignupReq>) -> AppResult<Response> {
     if !ratelimit::allow(&format!("signup:{}", client_ip(&headers)), 10, HOUR) {
         return Err(AppError::TooMany("too many sign-ups from this network — try again later".into()));
     }
@@ -191,7 +201,8 @@ async fn signup(State(state): State<AppState>, headers: axum::http::HeaderMap, J
         return Err(AppError::Forbidden("sign-up is disabled on this server".into()));
     }
     let email = req.email.trim().to_lowercase();
-    validate_credentials(&email, &req.password)?;
+    validate_email(&email)?;
+    passwords::check_new(&req.password, &[&email, &req.name, &req.org_name]).await?;
     if req.org_name.trim().is_empty() || req.name.trim().is_empty() {
         return Err(AppError::BadRequest("organization and name are required".into()));
     }
@@ -216,10 +227,10 @@ async fn signup(State(state): State<AppState>, headers: axum::http::HeaderMap, J
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
-    let token = create_session(&state, &user_id).await?;
+    let (token, cookie) = session::create(&state, &user_id, &headers, false).await?;
     audit(&state, &org_id, Some(&user_id), "org.created", req.org_name.trim()).await;
     let user = user_from_token(&state, &token).await?;
-    Ok(Json(json!({ "token": token, "user": user })))
+    Ok(with_session(cookie, json!({ "user": user })))
 }
 
 #[derive(Deserialize)]
@@ -228,7 +239,7 @@ struct LoginReq {
     password: String,
 }
 
-async fn login(State(state): State<AppState>, headers: axum::http::HeaderMap, Json(req): Json<LoginReq>) -> AppResult<Json<Value>> {
+async fn login(State(state): State<AppState>, headers: HeaderMap, Json(req): Json<LoginReq>) -> AppResult<Response> {
     let email = req.email.trim().to_lowercase();
     let ip = client_ip(&headers);
     let (acct_key, ip_key) = (format!("login:acct:{email}"), format!("login:ip:{ip}"));
@@ -236,11 +247,11 @@ async fn login(State(state): State<AppState>, headers: axum::http::HeaderMap, Js
     if ratelimit::exceeded(&acct_key, MAX_FAILED, LOCKOUT) || ratelimit::exceeded(&ip_key, MAX_FAILED * 6, LOCKOUT) {
         return Err(AppError::TooMany("too many failed attempts — wait 15 minutes or reset your password".into()));
     }
-    let row: Option<(String, String)> = sqlx::query_as("SELECT id, password_hash FROM users WHERE email = ?")
+    let row: Option<(String, String, String, bool)> = sqlx::query_as("SELECT id, password_hash, org_id, mfa_enabled FROM users WHERE email = ?")
         .bind(&email)
         .fetch_optional(&state.db)
         .await?;
-    let Some((uid, hash)) = row else {
+    let Some((uid, hash, org_id, mfa_enabled)) = row else {
         // Spend comparable time to avoid user enumeration via timing.
         let _ = hash_password(&req.password);
         ratelimit::hit(&acct_key);
@@ -250,42 +261,55 @@ async fn login(State(state): State<AppState>, headers: axum::http::HeaderMap, Js
     if !verify_password(&req.password, &hash) {
         ratelimit::hit(&acct_key);
         ratelimit::hit(&ip_key);
+        audit(&state, &org_id, Some(&uid), "auth.login_failed", &who(&headers)).await;
         return Err(AppError::Unauthorized);
     }
     ratelimit::reset(&acct_key);
+    if mfa_enabled {
+        // Second step required: hand back a short-lived ticket, not a session.
+        let ticket = crate::mfa::issue_ticket(&uid);
+        return Ok(Json(json!({ "mfa_required": true, "ticket": ticket })).into_response());
+    }
     sqlx::query("DELETE FROM sessions WHERE expires_at < ?").bind(now()).execute(&state.db).await?;
-    let token = create_session(&state, &uid).await?;
+    let (token, cookie) = session::create(&state, &uid, &headers, false).await?;
+    audit(&state, &org_id, Some(&uid), "auth.login", &who(&headers)).await;
     let user = user_from_token(&state, &token).await?;
-    Ok(Json(json!({ "token": token, "user": user })))
+    Ok(with_session(cookie, json!({ "user": user })))
 }
 
-async fn logout(State(state): State<AppState>, parts: axum::http::HeaderMap) -> AppResult<Json<Value>> {
-    if let Some(t) = parts
-        .get(axum::http::header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-    {
-        sqlx::query("DELETE FROM sessions WHERE token_hash = ?").bind(sha256_hex(t)).execute(&state.db).await?;
+/// "ip · user agent" for security audit entries.
+pub fn who(h: &HeaderMap) -> String {
+    let ua: String = h.get(axum::http::header::USER_AGENT).and_then(|v| v.to_str().ok()).unwrap_or("").chars().take(120).collect();
+    format!("{} · {ua}", client_ip(h))
+}
+
+async fn logout(State(state): State<AppState>, headers: HeaderMap) -> AppResult<Response> {
+    if let Some(t) = session::token_from_headers(&headers) {
+        sqlx::query("DELETE FROM sessions WHERE token_hash = ?").bind(sha256_hex(&t)).execute(&state.db).await?;
     }
-    Ok(Json(json!({ "ok": true })))
+    let mut res = Json(json!({ "ok": true })).into_response();
+    for c in session::clear_cookies(&headers) {
+        res.headers_mut().append(SET_COOKIE, c);
+    }
+    Ok(res)
 }
 
 async fn me(State(state): State<AppState>, user: AuthUser) -> AppResult<Json<Value>> {
-    let org: (String, String, Option<i64>, bool) =
-        sqlx::query_as("SELECT name, plan, max_screens, ai_enabled FROM organizations WHERE id = ?")
+    let org: (String, String, Option<i64>, bool, bool) =
+        sqlx::query_as("SELECT name, plan, max_screens, ai_enabled, require_mfa FROM organizations WHERE id = ?")
             .bind(user.org())
             .fetch_one(&state.db)
             .await?;
     Ok(Json(json!({
         "user": user.0,
-        "organization": { "id": user.org(), "name": org.0, "plan": org.1, "max_screens": org.2 },
+        "organization": { "id": user.org(), "name": org.0, "plan": org.1, "max_screens": org.2, "require_mfa": org.4 },
         "ai": { "available": crate::ai::configured() && org.3 },
     })))
 }
 
 async fn list_users(State(state): State<AppState>, user: AuthUser) -> AppResult<Json<Vec<User>>> {
     let users = sqlx::query_as::<_, User>(
-        "SELECT id, org_id, email, name, role, created_at, platform_admin FROM users WHERE org_id = ? ORDER BY created_at",
+        &format!("SELECT {USER_COLS} FROM users WHERE org_id = ? ORDER BY created_at"),
     )
     .bind(user.org())
     .fetch_all(&state.db)
@@ -313,11 +337,14 @@ fn assignable_role(role: &str) -> AppResult<()> {
     }
 }
 
-async fn create_user(State(state): State<AppState>, headers: axum::http::HeaderMap, user: AuthUser, Json(req): Json<CreateUserReq>) -> AppResult<Json<User>> {
+async fn create_user(State(state): State<AppState>, headers: HeaderMap, user: AuthUser, Json(req): Json<CreateUserReq>) -> AppResult<Json<User>> {
     user.require_admin()?;
     let email = req.email.trim().to_lowercase();
     let password = if req.invite { random_token(32) } else { req.password.clone() };
-    validate_credentials(&email, &password)?;
+    validate_email(&email)?;
+    if !req.invite {
+        passwords::check_new(&password, &[&email, &req.name]).await?;
+    }
     assignable_role(&req.role)?;
     let id = new_id();
     sqlx::query("INSERT INTO users (id, org_id, email, name, password_hash, role, created_at) VALUES (?,?,?,?,?,?,?)")
@@ -343,7 +370,7 @@ async fn create_user(State(state): State<AppState>, headers: axum::http::HeaderM
                 mail::esc(&user.0.name), mail::esc(&org_name), mail::button(&link, "Choose my password")),
         );
     }
-    let u = sqlx::query_as::<_, User>("SELECT id, org_id, email, name, role, created_at, platform_admin FROM users WHERE id = ?")
+    let u = sqlx::query_as::<_, User>(&format!("SELECT {USER_COLS} FROM users WHERE id = ?"))
         .bind(&id)
         .fetch_one(&state.db)
         .await?;
@@ -355,11 +382,14 @@ struct UpdateUserReq {
     role: Option<String>,
     name: Option<String>,
     password: Option<String>,
+    /// Admin action for a member who lost their authenticator.
+    #[serde(default)]
+    reset_mfa: bool,
 }
 
 async fn update_user(
     State(state): State<AppState>,
-    headers: axum::http::HeaderMap,
+    headers: HeaderMap,
     user: AuthUser,
     Path(id): Path<String>,
     Json(req): Json<UpdateUserReq>,
@@ -384,17 +414,26 @@ async fn update_user(
     if let Some(name) = &req.name {
         sqlx::query("UPDATE users SET name = ? WHERE id = ?").bind(name.trim()).bind(&id).execute(&state.db).await?;
     }
-    if let Some(pw) = &req.password {
-        if pw.len() < 8 {
-            return Err(AppError::BadRequest("password must be at least 8 characters".into()));
+    if req.reset_mfa {
+        user.require_admin()?;
+        if is_self {
+            return Err(AppError::BadRequest("use Security settings to change your own two-factor authentication".into()));
         }
+        sqlx::query("UPDATE users SET mfa_enabled = 0, mfa_secret = NULL, mfa_pending_secret = NULL, mfa_recovery = '[]' WHERE id = ?")
+            .bind(&id).execute(&state.db).await?;
+        sqlx::query("DELETE FROM sessions WHERE user_id = ?").bind(&id).execute(&state.db).await?;
+        audit(&state, user.org(), Some(&user.0.id), "auth.mfa_reset_by_admin", &id).await;
+    }
+    if let Some(pw) = &req.password {
+        let (email, name): (String, String) = sqlx::query_as("SELECT email, name FROM users WHERE id = ?").bind(&id).fetch_one(&state.db).await?;
+        passwords::check_new(pw, &[&email, &name]).await?;
         sqlx::query("UPDATE users SET password_hash = ? WHERE id = ?")
             .bind(hash_password(pw)?)
             .bind(&id)
             .execute(&state.db)
             .await?;
         // Sign out every other session of that user (keep the caller's own session).
-        let current = bearer(&headers).map(|t| sha256_hex(&t)).unwrap_or_default();
+        let current = session::token_from_headers(&headers).map(|t| sha256_hex(&t)).unwrap_or_default();
         sqlx::query("DELETE FROM sessions WHERE user_id = ? AND token_hash != ?").bind(&id).bind(current).execute(&state.db).await?;
         audit(&state, user.org(), Some(&user.0.id), "user.password_changed", &id).await;
     }
@@ -441,12 +480,9 @@ async fn list_audit(State(state): State<AppState>, user: AuthUser) -> AppResult<
 
 // ------------------------------------------------------------ password reset & invitations
 
-fn bearer(h: &axum::http::HeaderMap) -> Option<String> {
-    h.get(axum::http::header::AUTHORIZATION).and_then(|v| v.to_str().ok()).and_then(|v| v.strip_prefix("Bearer ")).map(str::to_owned)
-}
 
 /// Base URL for links in emails: QIVO_PUBLIC_URL, else what the browser used.
-pub fn public_url(h: &axum::http::HeaderMap) -> String {
+pub fn public_url(h: &HeaderMap) -> String {
     if let Some(u) = std::env::var("QIVO_PUBLIC_URL").ok().filter(|u| !u.trim().is_empty()) {
         return u.trim().trim_end_matches('/').to_string();
     }
@@ -472,7 +508,7 @@ struct ForgotReq {
 }
 
 /// Always answers the same way, whether or not the account exists.
-async fn forgot(State(state): State<AppState>, headers: axum::http::HeaderMap, Json(r): Json<ForgotReq>) -> AppResult<Json<Value>> {
+async fn forgot(State(state): State<AppState>, headers: HeaderMap, Json(r): Json<ForgotReq>) -> AppResult<Json<Value>> {
     let email = r.email.trim().to_lowercase();
     let ip = client_ip(&headers);
     if !ratelimit::allow(&format!("forgot:ip:{ip}"), 10, HOUR) || !ratelimit::allow(&format!("forgot:acct:{email}"), 3, HOUR) {
@@ -510,7 +546,7 @@ async fn valid_token(state: &AppState, token: &str) -> AppResult<(String, String
 }
 
 /// Lets the reset page greet the person ("Set your password, Amina").
-async fn token_info(State(state): State<AppState>, headers: axum::http::HeaderMap, Json(r): Json<TokenReq>) -> AppResult<Json<Value>> {
+async fn token_info(State(state): State<AppState>, headers: HeaderMap, Json(r): Json<TokenReq>) -> AppResult<Json<Value>> {
     if !ratelimit::allow(&format!("token:ip:{}", client_ip(&headers)), 30, HOUR) {
         return Err(AppError::TooMany("too many attempts — try again later".into()));
     }
@@ -524,14 +560,12 @@ struct ResetReq {
     password: String,
 }
 
-async fn reset_password(State(state): State<AppState>, headers: axum::http::HeaderMap, Json(r): Json<ResetReq>) -> AppResult<Json<Value>> {
+async fn reset_password(State(state): State<AppState>, headers: HeaderMap, Json(r): Json<ResetReq>) -> AppResult<Response> {
     if !ratelimit::allow(&format!("reset:ip:{}", client_ip(&headers)), 20, HOUR) {
         return Err(AppError::TooMany("too many attempts — try again later".into()));
     }
-    if r.password.len() < 8 {
-        return Err(AppError::BadRequest("password must be at least 8 characters".into()));
-    }
-    let (uid, purpose, email, _) = valid_token(&state, &r.token).await?;
+    let (uid, purpose, email, name) = valid_token(&state, &r.token).await?;
+    passwords::check_new(&r.password, &[&email, &name]).await?;
     let mut tx = state.db.begin().await?;
     // Mark used first: a token works exactly once even under concurrent requests.
     let used = sqlx::query("UPDATE password_tokens SET used_at = ? WHERE token_hash = ? AND used_at IS NULL")
@@ -545,7 +579,12 @@ async fn reset_password(State(state): State<AppState>, headers: axum::http::Head
     ratelimit::reset(&format!("login:acct:{email}"));
     let org: String = sqlx::query_scalar("SELECT org_id FROM users WHERE id = ?").bind(&uid).fetch_one(&state.db).await?;
     audit(&state, &org, Some(&uid), if purpose == "invite" { "user.invite_accepted" } else { "user.password_reset" }, &email).await;
-    let token = create_session(&state, &uid).await?;
+    // With 2FA on, a reset link alone must not grant a session: sign in normally (password + code).
+    let mfa_enabled: bool = sqlx::query_scalar("SELECT mfa_enabled FROM users WHERE id = ?").bind(&uid).fetch_one(&state.db).await?;
+    if mfa_enabled {
+        return Ok(Json(json!({ "ok": true, "signin_required": true })).into_response());
+    }
+    let (token, cookie) = session::create(&state, &uid, &headers, false).await?;
     let user = user_from_token(&state, &token).await?;
-    Ok(Json(json!({ "token": token, "user": user })))
+    Ok(with_session(cookie, json!({ "user": user })))
 }

@@ -109,5 +109,5 @@ const stat = (l, n) => `<div class="card stat"><div class="l">${l}</div><div cla
 const fmtTokens = (n) => (n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? Math.round(n / 1e3) + "k" : String(n));
 function tempPassword() {
   const c = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKMNPQRSTUVWXYZ23456789";
-  return Array.from(crypto.getRandomValues(new Uint32Array(12)), (x) => c[x % c.length]).join("");
+  return Array.from(crypto.getRandomValues(new Uint32Array(16)), (x) => c[x % c.length]).join("");
 }

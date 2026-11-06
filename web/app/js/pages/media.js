@@ -26,7 +26,7 @@ function uploadOne(file, onProgress) {
     fd.append("file", file, file.name);
     const xhr = new XMLHttpRequest();
     xhr.open("POST", "/api/media");
-    xhr.setRequestHeader("Authorization", `Bearer ${store.token}`);
+    xhr.withCredentials = true;
     xhr.upload.onprogress = (e) => e.lengthComputable && onProgress(e.loaded / e.total);
     xhr.onload = () => {
       const body = JSON.parse(xhr.responseText || "{}");

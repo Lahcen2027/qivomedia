@@ -9,9 +9,12 @@ mod alerts;
 mod auth;
 mod displays;
 mod error;
+mod headers;
 mod hub;
 mod mail;
 mod media;
+mod mfa;
+mod passwords;
 mod platform;
 mod player;
 mod public;
@@ -19,6 +22,7 @@ mod ratelimit;
 mod reports;
 mod content;
 mod schedules;
+mod session;
 mod state;
 mod triggers;
 #[cfg(test)]
@@ -34,7 +38,6 @@ use axum::{
 };
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use tower_http::{
-    cors::CorsLayer,
     services::{ServeDir, ServeFile},
     set_header::SetResponseHeaderLayer,
     trace::TraceLayer,
@@ -136,6 +139,7 @@ pub fn build_app(state: AppState, web_dir: &std::path::Path, data_dir: &std::pat
         .nest("/api", api)
         .route("/ws/player", get(player::ws_handler))
         .route("/ws/admin", get(hub::admin_ws_handler))
+        .route("/.well-known/security.txt", get(headers::security_txt))
         .nest("/files", files)
         .nest_service(
             "/player",
@@ -143,10 +147,7 @@ pub fn build_app(state: AppState, web_dir: &std::path::Path, data_dir: &std::pat
         )
         .nest_service("/shared", ServeDir::new(web_dir.join("shared")))
         .fallback_service(ServeDir::new(web_dir.join("app")).fallback(ServeFile::new(web_dir.join("app/index.html"))))
-        .layer(SetResponseHeaderLayer::if_not_present(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff")))
-        .layer(SetResponseHeaderLayer::if_not_present(header::REFERRER_POLICY, HeaderValue::from_static("strict-origin-when-cross-origin")))
-        .layer(SetResponseHeaderLayer::if_not_present(header::X_FRAME_OPTIONS, HeaderValue::from_static("SAMEORIGIN")))
-        .layer(CorsLayer::permissive())
+        .layer(axum::middleware::from_fn(headers::security))
         .layer(TraceLayer::new_for_http())
         .with_state(state)
 }

@@ -22,7 +22,7 @@ export async function render(root) {
       <div class="layout-thumb" style="background:${esc(l.background)};aspect-ratio:${l.width}/${l.height};max-height:180px;margin:0 auto 12px">${tplPreview(l.regions)}</div>
       <div class="row"><h2 class="grow">${esc(l.name)}</h2>${l.origin === "ai" ? `<span class="badge acc" title="Designed by the AI agent">AI</span>` : ""}<span class="badge">${l.width}×${l.height}</span></div>
       <p class="small muted" style="margin:4px 0 12px">${l.regions.length} zone${l.regions.length === 1 ? "" : "s"}</p>
-      <div class="row"><a class="btn sm" href="#/layouts/${l.id}">Design</a><a class="btn sm" href="/player/?preview=${l.id}&token=${encodeURIComponent(store.token)}" target="_blank">Preview ↗</a>
+      <div class="row"><a class="btn sm" href="#/layouts/${l.id}">Design</a><a class="btn sm" href="/player/?preview=${l.id}" target="_blank">Preview ↗</a>
       ${can.edit() ? `<button class="btn sm" data-dup>Duplicate</button><button class="btn sm ghost danger" data-del>Delete</button>` : ""}</div></div>`).join("")
       : `<div class="card empty" style="grid-column:1/-1"><h3>No layouts yet</h3><p>Start from a template — full screen, L-bar, split, quad…</p></div>`}</div></div>`);
   root.appendChild(page);
@@ -96,7 +96,7 @@ export async function edit(root, id) {
       setLabel(on);
     };
   }
-  page.querySelector("[data-prev]").href = `/player/?preview=${id}&token=${encodeURIComponent(store.token)}`;
+  page.querySelector("[data-prev]").href = `/player/?preview=${id}`;
 
   const plName = (pid) => playlists.find((p) => p.id === pid)?.name;
   let scale = 1;
@@ -203,7 +203,7 @@ export async function edit(root, id) {
 
 function aiSummaryCard(summary, id) {
   const c = h(`<div class="card ai-summary"><div class="row"><span class="ai-ico">${ICON.sparkle}</span><div class="grow"><b>AI draft ready.</b> <span class="muted">${esc(summary || "")}</span></div>
-    <a class="btn sm" target="_blank" href="/player/?preview=${id}&token=${encodeURIComponent(store.token)}">Preview ↗</a><button class="btn sm ghost" data-x>✕</button></div>
+    <a class="btn sm" target="_blank" href="/player/?preview=${id}">Preview ↗</a><button class="btn sm ghost" data-x>✕</button></div>
     <div class="small faint" style="margin-top:6px">It isn't on any screen yet. Edit anything you like, then assign it as a screen's default layout or add it to the schedule.</div></div>`);
   c.querySelector("[data-x]").onclick = () => c.remove();
   return c;

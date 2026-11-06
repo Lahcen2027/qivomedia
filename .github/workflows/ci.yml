@@ -4,6 +4,12 @@ on:
   push:
     branches: [main]
   pull_request:
+  schedule:
+    - cron: "17 4 * * 1"   # weekly: catch newly published vulnerabilities
+
+# Least privilege for the workflow token.
+permissions:
+  contents: read
 
 jobs:
   test:
@@ -28,6 +34,17 @@ jobs:
           sed 's/^CADDYFILE=.*/CADDYFILE=Caddyfile.saas/' deploy/.env.example > /tmp/saas.env
           docker compose -f deploy/docker-compose.prod.yml --env-file /tmp/saas.env config --quiet
 
+  audit:
+    name: Dependency vulnerabilities (RustSec)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: cargo audit
+        run: |
+          cargo install cargo-audit --locked
+          cargo audit   # ignores are documented in .cargo/audit.toml
+
   docker:
     runs-on: ubuntu-latest
     needs: test
@@ -51,3 +68,16 @@ jobs:
           for f in Caddyfile Caddyfile.saas; do
             docker run --rm --env-file /tmp/caddy.env -v "$PWD/deploy/$f:/etc/caddy/Caddyfile:ro" caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
           done
+      - name: Scan the image for known vulnerabilities (Trivy)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: qivomedia:ci
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+      - name: Software bill of materials (SBOM)
+        uses: anchore/sbom-action@v0
+        with:
+          image: qivomedia:ci
+          format: spdx-json
+          artifact-name: qivomedia-sbom.spdx.json
