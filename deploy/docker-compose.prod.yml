@@ -45,7 +45,8 @@ services:
       QIVO_DOMAIN: ${QIVO_DOMAIN:?set QIVO_DOMAIN in deploy/.env}
       ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in deploy/.env}
     volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./${CADDYFILE:-Caddyfile}:/etc/caddy/Caddyfile:ro
+      - ../site/dist:/srv/site:ro   # public website (SaaS mode only)
       - caddy-data:/data        # TLS certificates — keep this volume
       - caddy-config:/config
     logging:

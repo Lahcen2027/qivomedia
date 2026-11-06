@@ -104,7 +104,7 @@ async fn register(State(state): State<AppState>, body: Option<Json<RegisterReq>>
 }
 
 /// Gather layouts → playlists → media into one self-contained bundle.
-async fn bundle(state: &AppState, org: &str, layout_ids: &BTreeSet<String>) -> AppResult<(Value, Value, Value)> {
+pub(crate) async fn bundle(state: &AppState, org: &str, layout_ids: &BTreeSet<String>) -> AppResult<(Value, Value, Value)> {
     let mut layouts = BTreeMap::new();
     let mut playlist_ids = BTreeSet::new();
     for lid in layout_ids {

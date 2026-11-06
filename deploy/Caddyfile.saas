@@ -1,0 +1,50 @@
+# SaaS mode: marketing website on the main domain, the app on app.<domain>.
+# Enable with CADDYFILE=Caddyfile.saas in deploy/.env (see DEPLOY.md).
+{
+	email {$ACME_EMAIL}
+}
+
+(common) {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+	log {
+		output stdout
+		format console
+	}
+}
+
+www.{$QIVO_DOMAIN} {
+	redir https://{$QIVO_DOMAIN}{uri} permanent
+}
+
+# Public website (static files built by site/build.py).
+{$QIVO_DOMAIN} {
+	import common
+	# The hero's live player and the demo form talk to the app on the same origin.
+	@app path /api/public/* /player /player/* /shared/* /files/*
+	handle @app {
+		reverse_proxy qivomedia:8080
+	}
+	handle {
+		root * /srv/site
+		file_server
+		header /assets/* Cache-Control "public, max-age=86400"
+	}
+}
+
+# The application: dashboard, API, players, WebSockets.
+app.{$QIVO_DOMAIN} {
+	import common
+	reverse_proxy qivomedia:8080 {
+		flush_interval -1
+		transport http {
+			read_timeout 30m
+			write_timeout 30m
+		}
+	}
+}

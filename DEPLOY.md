@@ -88,6 +88,25 @@ qivo exec qivomedia qivo-server make-admin colleague@example.com
 
 The **Create with AI** button then appears in **Layouts**, and an **Ask AI to change** bar appears in the layout designer. Everything the AI makes is a draft. It isn't shown on any screen until someone assigns it. Each AI design is usually a few thousand tokens. The Platform page shows token use per month so you can watch the cost.
 
+## 9. Website + app on qivomedia.com (SaaS mode)
+
+For your own SaaS you can run the public website on the main domain and the app on `app.` with the same server:
+
+1. DNS: add an **A record for `app`** pointing to the server, next to `@` and `www`.
+2. In `deploy/.env` set `CADDYFILE=Caddyfile.saas`.
+3. Build the website and restart:
+   ```bash
+   python3 site/build.py      # writes site/dist (English /, French /fr/, Arabic /ar/)
+   qivo up -d
+   ```
+
+- `https://qivomedia.com` is the website. `https://app.qivomedia.com` is the dashboard, and screens open `https://app.qivomedia.com/player`.
+- **Hero demo:** in the dashboard, open a layout and click **Show on website**. It plays live in the hero. Until you choose one, a built-in demo plays.
+- **Demo requests** from the form appear under **Platform → Customers & usage → Website demo requests**, where you can mark them contacted, won or lost. The form is protected by a bot trap and a limit of 5 requests per hour per visitor.
+- **Edit the text and prices** in `site/src/i18n.json`. The prices are the `*_price` keys and currently say "On request". Run `python3 site/build.py` again afterwards. No restart is needed.
+
+Universities and other self-hosted customers keep the default `CADDYFILE=Caddyfile`: one domain, no website.
+
 ## Everyday operations
 
 All commands run from `/opt/qivomedia`. To save typing:

@@ -64,7 +64,7 @@ export async function edit(root, id) {
   let sel = regions[0]?.id;
   const page = h(`<div>
     <div class="head"><div><a href="#/layouts" class="small">← Layouts</a><h1 style="margin-top:4px">${esc(layout.name)}</h1></div>
-      <div class="row"><a class="btn" target="_blank" data-prev>Preview ↗</a>${can.edit() ? `<button class="btn" data-addz>+ Zone</button><button class="btn primary" data-save>Save</button>` : ""}</div></div>
+      <div class="row">${store.me.user.platform_admin ? `<button class="btn" data-web title="Show this layout in the live player on your public website">Show on website</button>` : ""}<a class="btn" target="_blank" data-prev>Preview ↗</a>${can.edit() ? `<button class="btn" data-addz>+ Zone</button><button class="btn primary" data-save>Save</button>` : ""}</div></div>
     <div class="ai-note"></div>
     ${can.edit() && store.me.ai?.available ? `<form class="ai-bar card" data-aibar><span class="ai-ico">${ICON.sparkle}</span><input name="q" placeholder="Ask AI to change this layout — e.g. “make the headline bigger and add the weather for Rabat”" autocomplete="off"><button class="btn ai-btn" type="submit">Change</button></form>` : ""}
     <div class="designer">
@@ -84,6 +84,18 @@ export async function edit(root, id) {
   root.appendChild(page);
   const canvas = page.querySelector(".canvas");
   const zprops = page.querySelector(".zprops");
+  const webBtn = page.querySelector("[data-web]");
+  if (webBtn) {
+    const setLabel = (on) => { webBtn.textContent = on ? "✓ On website" : "Show on website"; webBtn.classList.toggle("ai-btn", on); };
+    api("/platform/settings/demo-layout").then((r) => setLabel(r.layout_id === id)).catch(() => {});
+    webBtn.onclick = async () => {
+      const cur = await api("/platform/settings/demo-layout");
+      const on = cur.layout_id !== id;
+      await guard(() => api("/platform/settings/demo-layout", { method: "PUT", body: { layout_id: on ? id : null } }),
+        on ? "This layout now plays in your website's hero" : "Removed from website — the built-in demo plays instead");
+      setLabel(on);
+    };
+  }
   page.querySelector("[data-prev]").href = `/player/?preview=${id}&token=${encodeURIComponent(store.token)}`;
 
   const plName = (pid) => playlists.find((p) => p.id === pid)?.name;

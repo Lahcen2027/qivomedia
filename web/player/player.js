@@ -5,6 +5,7 @@ import { activeLayouts, itemPlayable, fillTemplate } from "/shared/schedule.js";
 const qs = new URLSearchParams(location.search);
 const PREVIEW = qs.get("preview");
 const PREVIEW_TOKEN = qs.get("token");
+const DEMO = qs.has("demo"); // website hero: public demo layout, no pairing, no reporting
 const LS = { key: "qivo.device_key", id: "qivo.display_id", manifest: "qivo.manifest", pop: "qivo.pop_queue" };
 const viewport = document.getElementById("viewport");
 const startedAt = Date.now();
@@ -26,7 +27,7 @@ const deviceKey = () => localStorage.getItem(LS.key);
 async function api(path, opts = {}) {
   const headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
   if (PREVIEW_TOKEN) headers.Authorization = `Bearer ${PREVIEW_TOKEN}`;
-  else if (deviceKey()) headers["X-Device-Key"] = deviceKey();
+  else if (deviceKey() && !DEMO) headers["X-Device-Key"] = deviceKey();
   const res = await fetch(path, { ...opts, headers });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) { const e = new Error(body.error || res.statusText); e.status = res.status; throw e; }
@@ -78,7 +79,7 @@ async function syncMediaCache(m) {
 
 // ---------------- proof of play ----------------
 function popRecord(rec) {
-  if (PREVIEW) return;
+  if (PREVIEW || DEMO) return;
   const q = JSON.parse(localStorage.getItem(LS.pop) || "[]");
   q.push(rec);
   localStorage.setItem(LS.pop, JSON.stringify(q.slice(-20000)));
@@ -412,6 +413,13 @@ function applyManifest(m, force = false) {
 // ---------------- network ----------------
 async function loadManifest() {
   try {
+    if (DEMO) {
+      let m;
+      try { m = await api("/api/public/demo"); } catch { m = null; }
+      if (!m || m.status !== "active") m = builtinDemo();
+      applyManifest(m);
+      return;
+    }
     const m = PREVIEW ? await api(`/api/preview/layout/${encodeURIComponent(PREVIEW)}`) : await api("/api/player/manifest");
     if (m.status === "pending") { manifest = null; showPairing(m.pairing_code); return; }
     if (m.status === "disabled") { manifest = null; sysScreen(`<p>This screen has been disabled by an administrator.</p>`); return; }
@@ -484,6 +492,17 @@ function reportStatus() {
 
 // ---------------- boot ----------------
 async function boot() {
+  if (DEMO) {
+    // Driven by the website: buttons post messages to simulate an alert.
+    addEventListener("message", (e) => {
+      if (e.origin !== location.origin || e.data?.type !== "qivo-demo") return;
+      if (e.data.action === "alert" && e.data.alert) { alerts.clear(); alertShown = null; alerts.set("demo", { ...e.data.alert, id: "demo", sound: false, started_at: new Date().toISOString() }); tick(); }
+      if (e.data.action === "clear" && alerts.delete("demo")) { allClear(); current.key = ""; tick(); }
+    });
+    await loadManifest();
+    setInterval(tick, 1000);
+    return;
+  }
   if (PREVIEW) {
     document.body.style.cursor = "default";
     document.body.appendChild(el("div", "preview-badge", "Preview"));
@@ -575,6 +594,27 @@ function siren() {
     }
     osc.start(t0); osc.stop(t0 + 3);
   } catch { /* audio may be blocked until the screen has been interacted with */ }
+}
+
+
+/** Shown on the website when no demo layout has been chosen yet: widgets only, no media. */
+function builtinDemo() {
+  const slide = (k, h, s, bg) => ({ id: k, type: "html", duration: 7, html: `<div style="height:100%;display:flex;flex-direction:column;justify-content:center;padding:0 7vw;background:${bg};color:#fff;font-family:system-ui,'Segoe UI',sans-serif"><div style="font-size:4.4vh;letter-spacing:.18em;text-transform:uppercase;opacity:.85">${k}</div><div style="font-size:14vh;font-weight:800;line-height:1.02;margin:2.5vh 0">${h}</div><div style="font-size:5.6vh;opacity:.92">${s}</div></div>` });
+  return {
+    status: "active", version: "builtin-demo", display: { id: "demo", name: "Demo" }, default_layout_id: "demo", schedules: [], alerts: [], media: {},
+    layouts: { demo: { id: "demo", name: "Demo", width: 1920, height: 1080, background: "#000", regions: [
+      { id: "m", x: 0, y: 0, w: 75, h: 85, z: 0, transition: "fade", playlist_id: "p1" },
+      { id: "s", x: 75, y: 0, w: 25, h: 85, z: 1, transition: "fade", playlist_id: "p2" },
+      { id: "t", x: 0, y: 85, w: 100, h: 15, z: 2, transition: "none", playlist_id: "p3" } ] } },
+    playlists: {
+      p1: { id: "p1", items: [
+        slide("Campus news", "Welcome week starts Monday", "Main hall · 10:00 – 16:00", "#6a4cf0"),
+        slide("Bibliothèque", "Ouverte jusqu'à 22h", "Pendant toute la période d'examens", "#0e7490"),
+        slide("Cafétéria", "Menu du jour", "Tajine · Salade · Jus d'orange frais", "#b45309") ] },
+      p2: { id: "p2", items: [{ id: "c", type: "clock", duration: 60, size: 150, color: "#ffffff", bg: "#10141e", format: "24h", show_date: true }] },
+      p3: { id: "p3", items: [{ id: "k", type: "ticker", duration: 60, size: 62, color: "#04342c", bg: "#6ee7ff", speed: 150, text: "Library open until 22:00  •  Exams start Monday  •  Shuttle every 15 minutes  •  " }] },
+    },
+  };
 }
 
 // Start last, so every declaration above is initialized before the first render.

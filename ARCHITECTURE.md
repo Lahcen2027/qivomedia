@@ -65,6 +65,10 @@ CMS, web player, pairing, layouts/zones, playlists/widgets, scheduling, triggers
 - **Emergency alerts**: templates in FR/AR/EN (fire, evacuation, lockdown, severe weather) plus custom alerts in red/amber/blue; targets all/group/screen; above all schedules and triggers; included in the manifest, so they survive reboots and offline periods; siren; "All clear" on clear; test/drill mode; JSON webhook + **CAP 1.2** (Alert/Update start, Cancel clears matching `references`); audit-logged; active-alert banner across the dashboard. Editors can raise alerts.
 - **Seamless playback**: double-buffered swap reveals the next item only when it is ready (decoded image / playing video, 2.5 s cap), so there is no black frame between items.
 
+**Phase 1.7 — built (v0.4)**
+- **Public website** (`site/`): EN `/`, FR `/fr/`, AR `/ar/` (RTL) generated from one template plus `i18n.json`. The hero embeds the real player in demo mode (`/player/?demo=1`, which loads the layout chosen with "Show on website", or a built-in demo) and drives a demo alert via postMessage. The demo form sends leads to `/api/public/demo-requests` (honeypot, 5/hour/IP), and they appear in Platform.
+- **SaaS routing**: `deploy/Caddyfile.saas` serves the site on the apex domain, proxies `/api/public`, `/player`, `/shared` and `/files` on the same origin, and serves the app on `app.<domain>`. The default `Caddyfile` stays single-domain for self-hosted customers.
+
 **Phase 2 — Production hardening (next 4–6 weeks)**
 - Postgres backend + S3/R2 media storage + signed URLs; Redis or Postgres LISTEN/NOTIFY so several server instances share the event bus
 - Per-screen timezone; holiday/exception dates; campaigns (ordered layout sets) and share-of-voice

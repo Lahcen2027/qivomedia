@@ -44,6 +44,10 @@ Server commands: `qivo-server healthcheck` · `qivo-server backup [file]` · `qi
 - **Platform admin** for the SaaS owner: create customer organizations, set plans, screen limits and AI allowances, suspend or reactivate customers, and see usage across the platform.
 - **Proof of play**: the device records every play, even offline, and syncs it later. Reports break plays down by day, content and screen, and export to CSV.
 
+## Website
+
+`site/` holds the public website for qivomedia.com in English, French and Arabic, with full right-to-left layout. The hero shows the real player running live, with a button that triggers a demo fire alert, and there's a demo-request form that feeds leads into the Platform page. Build it with `python3 site/build.py`. See DEPLOY.md, section 9.
+
 ## Layout
 
 ```
@@ -62,6 +66,8 @@ migrations/     SQL schema
 web/app/        CMS dashboard (vanilla ES modules, no build step)
 web/player/     web player + service worker
 web/shared/     schedule engine shared by player and dashboard
+site/           public website (src/ → build.py → dist/)
+deploy/         production compose, Caddyfiles, installer, backups
 ```
 
 See `ARCHITECTURE.md` for the design and roadmap.

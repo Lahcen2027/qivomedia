@@ -13,6 +13,7 @@ mod hub;
 mod media;
 mod platform;
 mod player;
+mod public;
 mod reports;
 mod content;
 mod schedules;
@@ -104,6 +105,7 @@ async fn main() -> anyhow::Result<()> {
         .merge(platform::routes())
         .merge(ai::routes())
         .merge(alerts::routes())
+        .merge(public::routes())
         .route("/health", get(|| async { "ok" }));
 
     let files = Router::new()

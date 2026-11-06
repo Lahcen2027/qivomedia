@@ -8,7 +8,8 @@ export async function render(root) {
     root.innerHTML = `<div class="empty"><h3>Platform admins only</h3></div>`;
     return;
   }
-  const [o, orgs, usage] = await Promise.all([api("/platform/overview"), api("/platform/orgs"), api("/platform/ai-usage")]);
+  const [o, orgs, usage, leads] = await Promise.all([api("/platform/overview"), api("/platform/orgs"), api("/platform/ai-usage"), api("/platform/leads")]);
+  const newLeads = leads.filter((l) => l.status === "new").length;
   const rerender = () => { root.innerHTML = ""; render(root); };
 
   const page = h(`<div>
@@ -35,6 +36,13 @@ export async function render(root) {
         <td class="muted">${ago(g.last_seen)}</td>
         <td class="t-actions"><button class="btn sm" data-e>Edit</button>${g.is_own ? "" : `<button class="btn sm ${g.suspended ? "" : "danger"}" data-s>${g.suspended ? "Reactivate" : "Suspend"}</button>`}</td></tr>`).join("")}
     </tbody></table></div>
+    <div class="card flush" style="margin-bottom:18px"><div class="row" style="padding:14px 16px"><h2 class="grow">Website demo requests</h2>${newLeads ? `<span class="badge acc">${newLeads} new</span>` : ""}</div>
+      <table><thead><tr><th>When</th><th>Contact</th><th>Organization</th><th>Screens</th><th>Message</th><th>Status</th></tr></thead><tbody>
+      ${leads.map((l) => `<tr data-lead="${l.id}"><td class="muted small">${ago(l.created_at)}</td>
+        <td><b>${esc(l.name)}</b><div class="small"><a href="mailto:${esc(l.email)}">${esc(l.email)}</a> <span class="faint">· ${esc(l.lang.toUpperCase())}</span></div></td>
+        <td>${esc(l.organization)}</td><td>${esc(l.screens)}</td><td class="small" style="max-width:320px">${esc(l.message)}</td>
+        <td><select data-st style="width:auto;padding:4px 8px">${["new", "contacted", "won", "lost"].map((x) => `<option ${x === l.status ? "selected" : ""}>${x}</option>`).join("")}</select></td></tr>`).join("") || `<tr><td colspan="6" class="muted">No requests yet. They arrive here from the demo form on your website.</td></tr>`}
+      </tbody></table></div>
     <div class="card flush"><div style="padding:14px 16px"><h2>Recent AI activity</h2></div><table><thead><tr><th>When</th><th>Organization</th><th>Type</th><th>Brief</th><th>Tokens</th><th>Result</th></tr></thead><tbody>
       ${usage.map((u) => `<tr><td class="muted small">${ago(u.created_at)}</td><td>${esc(u.org_name || "deleted")}</td><td>${u.kind === "create" ? "New layout" : "Revision"}</td>
         <td class="small" style="max-width:380px">${esc(u.prompt.length > 120 ? u.prompt.slice(0, 120) + "…" : u.prompt)}</td>
@@ -61,6 +69,8 @@ export async function render(root) {
     },
   }).then((ok) => ok && rerender());
 
+  page.querySelectorAll("tr[data-lead]").forEach((tr) => tr.querySelector("[data-st]").addEventListener("change", (e) =>
+    guard(() => api(`/platform/leads/${tr.dataset.lead}`, { method: "PATCH", body: { status: e.target.value } }), "Status updated")));
   page.querySelectorAll("tr[data-id]").forEach((tr) => {
     const g = orgs.find((x) => x.id === tr.dataset.id);
     tr.querySelector("[data-s]")?.addEventListener("click", async () => {

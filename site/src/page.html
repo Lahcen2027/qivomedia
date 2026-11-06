@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="{{lang}}" dir="{{dir}}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{meta_title}}</title>
+<meta name="description" content="{{meta_desc}}">
+<link rel="canonical" href="{{canonical}}">
+<link rel="alternate" hreflang="en" href="{{base_url}}/">
+<link rel="alternate" hreflang="fr" href="{{base_url}}/fr/">
+<link rel="alternate" hreflang="ar" href="{{base_url}}/ar/">
+<link rel="alternate" hreflang="x-default" href="{{base_url}}/">
+<meta property="og:title" content="{{meta_title}}">
+<meta property="og:description" content="{{meta_desc}}">
+<meta property="og:type" content="website">
+<meta name="theme-color" content="#0b0e15">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%236a4cf0'/></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Space+Grotesk:wght@600;700&family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{root}}assets/site.css?v={{build}}">
+</head>
+<body>
+<a class="skip" href="#main">{{skip}}</a>
+<header class="top">
+  <div class="wrap">
+    <a class="brand" href="{{root}}{{lang_path}}"><i></i>Qivomedia</a>
+    <nav class="main" aria-label="{{nav_label}}">
+      <a href="#product">{{nav_product}}</a>
+      <a href="#universities">{{nav_universities}}</a>
+      <a href="#hosting">{{nav_hosting}}</a>
+      <a href="#pricing">{{nav_pricing}}</a>
+      <span class="langs">{{lang_links}}</span>
+    </nav>
+    <div class="actions">
+      <a class="link" href="{{app_url}}">{{sign_in}}</a>
+      <a class="btn primary" href="#demo">{{book_demo}}</a>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+<section class="wrap hero">
+  <div>
+    <div class="pill"><span class="live"></span>{{hero_pill}}</div>
+    <h1>{{hero_title_1}}<br><em>{{hero_title_2}}</em></h1>
+    <p class="lead">{{hero_lead}}</p>
+    <div class="ctas">
+      <a class="btn primary" href="#demo">{{book_demo}}</a>
+      <a class="btn ghost" href="#live">{{hero_watch}}</a>
+    </div>
+    <div class="checks"><span>✓ {{check_1}}</span><span>✓ {{check_2}}</span><span>✓ {{check_3}}</span></div>
+  </div>
+  <div id="live">
+    <div class="tv">
+      <div class="screen"><iframe src="{{root}}player/?demo=1" title="{{tv_title}}" loading="eager" allow="autoplay"></iframe></div>
+      <div class="cap"><span><span class="live"></span>{{tv_caption}}</span><span style="color:var(--cyan)">{{tv_try}}</span></div>
+    </div>
+    <div class="try">
+      <button type="button" class="danger" data-demo="alert">{{try_alert}}</button>
+      <button type="button" class="ok" data-demo="clear">{{try_clear}}</button>
+    </div>
+  </div>
+</section>
+
+<div class="strip"><div class="wrap"><b>{{built_for}}</b>{{sectors}}</div></div>
+
+<section id="product" class="wrap sec">
+  <div class="intro">
+    <div class="kicker">{{why_kicker}}</div>
+    <h2 class="h2">{{why_title}}</h2>
+  </div>
+  <div class="cards">
+    <div class="card"><div class="ico" style="background:#17142e"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#b9a8ff" stroke-width="2" aria-hidden="true"><path d="M13 2L4 14h7l-1 8 9-12h-7z"/></svg></div>
+      <h3>{{p1_title}}</h3><p>{{p1_text}}</p></div>
+    <div class="card"><div class="ico" style="background:#0d2730"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#6ee7ff" stroke-width="2" aria-hidden="true"><path d="M2 8.8a15 15 0 0120 0M5 12.5a10 10 0 0114 0M8.5 16a5 5 0 017 0M3 3l18 18"/></svg></div>
+      <h3>{{p2_title}}</h3><p>{{p2_text}}</p></div>
+    <div class="card"><div class="ico" style="background:#2a1414"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#ff9b9b" stroke-width="2" aria-hidden="true"><path d="M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0zM12 9v4M12 17h.01"/></svg></div>
+      <h3>{{p3_title}}</h3><p>{{p3_text}}</p></div>
+    <div class="card"><div class="ico" style="background:#17142e"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#b9a8ff" stroke-width="2" aria-hidden="true"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/></svg></div>
+      <h3>{{p4_title}}</h3><p>{{p4_text}}</p></div>
+  </div>
+</section>
+
+<section class="wrap split">
+  <div>
+    <div class="kicker violet">{{studio_kicker}}</div>
+    <h2>{{studio_title}}</h2>
+    <p>{{studio_text}}</p>
+    <ul class="bul"><li>{{studio_b1}}</li><li>{{studio_b2}}</li><li>{{studio_b3}}</li></ul>
+  </div>
+  <div class="mock" aria-hidden="true">
+    <div class="zones" dir="ltr">
+      <div style="left:0;top:0;width:75%;height:85%;border:2px solid #6a4cf0;background:#1c1640;color:#e3dcff">{{zone_main}}<small style="color:#b9a8ff">{{zone_main_sub}}</small></div>
+      <div style="left:75%;top:0;width:25%;height:85%;border:1px solid #6ee7ff;background:#0d2730;color:#c9f5ff">{{zone_side}}<small style="color:#8fdcef">{{zone_side_sub}}</small></div>
+      <div style="left:0;top:85%;width:100%;height:15%;border:1px solid #6ee7ff;background:#0d2730;color:#c9f5ff">{{zone_ticker}}</div>
+    </div>
+  </div>
+</section>
+
+<section class="wrap split rev">
+  <div class="mock" aria-hidden="true">
+    <div class="week" dir="ltr">{{week_days}}</div>
+    <div class="week" dir="ltr" style="margin-top:8px">
+      <div class="c"><i style="flex:2;background:#0e7490"></i><i style="flex:5;background:#6a4cf0"></i><i style="flex:2;background:#b45309"></i></div>
+      <div class="c"><i style="flex:2;background:#0e7490"></i><i style="flex:5;background:#6a4cf0"></i><i style="flex:2;background:#b45309"></i></div>
+      <div class="c"><i style="flex:2;background:#0e7490"></i><i style="flex:5;background:#6a4cf0"></i><i style="flex:2;background:#b45309"></i></div>
+      <div class="c"><i style="flex:2;background:#0e7490"></i><i style="flex:5;background:#6a4cf0"></i><i style="flex:2;background:#b45309"></i></div>
+      <div class="c"><i style="flex:2;background:#0e7490"></i><i style="flex:5;background:#6a4cf0"></i><i style="flex:2;background:#b45309"></i></div>
+      <div class="c"><i style="flex:9;background:#334155"></i></div>
+      <div class="c"><i style="flex:9;background:#334155"></i></div>
+    </div>
+    <div class="legend"><span><i style="background:#0e7490"></i>{{leg_1}}</span><span><i style="background:#6a4cf0"></i>{{leg_2}}</span><span><i style="background:#b45309"></i>{{leg_3}}</span><span><i style="background:#334155"></i>{{leg_4}}</span></div>
+  </div>
+  <div>
+    <div class="kicker violet">{{sched_kicker}}</div>
+    <h2>{{sched_title}}</h2>
+    <p>{{sched_text}}</p>
+    <ul class="bul"><li>{{sched_b1}}</li><li>{{sched_b2}}</li><li>{{sched_b3}}</li></ul>
+  </div>
+</section>
+
+<div id="universities" class="light"><section class="wrap sec">
+  <div class="head">
+    <div><div class="kicker deep">{{uni_kicker}}</div><h2 class="h2">{{uni_title}}</h2><p>{{uni_text}}</p></div>
+    <a class="btn dark" href="#demo">{{uni_cta}}</a>
+  </div>
+  <div class="grid3">
+    <div class="wcard"><span class="tag red">{{u1_tag}}</span><h3>{{u1_title}}</h3><p>{{u1_text}}</p></div>
+    <div class="wcard"><span class="tag vio">{{u2_tag}}</span><h3>{{u2_title}}</h3><p>{{u2_text}}</p></div>
+    <div class="wcard"><span class="tag vio">{{u3_tag}}</span><h3>{{u3_title}}</h3><p>{{u3_text}}</p></div>
+    <div class="wcard"><span class="tag cy">{{u4_tag}}</span><h3>{{u4_title}}</h3><p>{{u4_text}}</p></div>
+    <div class="wcard"><span class="tag cy">{{u5_tag}}</span><h3>{{u5_title}}</h3><p>{{u5_text}}</p></div>
+    <div class="wcard"><span class="tag cy">{{u6_tag}}</span><h3>{{u6_title}}</h3><p>{{u6_text}}</p></div>
+  </div>
+</section></div>
+
+<section id="hosting" class="wrap sec" style="padding-bottom:104px">
+  <div class="intro" style="margin-bottom:44px"><div class="kicker">{{host_kicker}}</div><h2 class="h2">{{host_title}}</h2></div>
+  <div class="cards">
+    <div class="card"><h3>{{cloud_title}}</h3><p style="margin-bottom:20px">{{cloud_text}}</p><ul class="bul"><li>{{cloud_b1}}</li><li>{{cloud_b2}}</li><li>{{cloud_b3}}</li></ul></div>
+    <div class="card" style="border-color:#6a4cf0"><h3>{{onprem_title}}</h3><p style="margin-bottom:20px">{{onprem_text}}</p><div class="code">docker compose up -d</div></div>
+  </div>
+</section>
+
+<div id="pricing" class="light"><section class="wrap sec">
+  <div style="text-align:center;max-width:640px;margin:0 auto 52px"><h2 class="h2" style="margin-bottom:14px">{{price_title}}</h2><p style="font-size:18px;color:var(--ink2);margin:0">{{price_text}}</p></div>
+  <div class="prices">
+    <div class="price"><h3>{{pilot_title}}</h3><p class="sub">{{pilot_sub}}</p><div class="amt">{{pilot_price}}</div><ul><li>{{pilot_b1}}</li><li>{{pilot_b2}}</li><li>{{pilot_b3}}</li></ul><a class="btn outline" href="#demo">{{pilot_cta}}</a></div>
+    <div class="price hot"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px"><h3>{{cloudp_title}}</h3><span class="badge">{{popular}}</span></div><p class="sub">{{cloudp_sub}}</p><div class="amt">{{cloudp_price}}</div><ul><li>{{cloudp_b1}}</li><li>{{cloudp_b2}}</li><li>{{cloudp_b3}}</li></ul><a class="btn primary" href="#demo">{{cloudp_cta}}</a></div>
+    <div class="price"><h3>{{onp_title}}</h3><p class="sub">{{onp_sub}}</p><div class="amt">{{onp_price}}</div><ul><li>{{onp_b1}}</li><li>{{onp_b2}}</li><li>{{onp_b3}}</li></ul><a class="btn outline" href="#demo">{{onp_cta}}</a></div>
+  </div>
+</section></div>
+
+<section class="wrap sec">
+  <h2 style="font-size:clamp(28px,3vw,38px);margin-bottom:32px">{{players_title}}</h2>
+  <div class="players">
+    <div><b>{{pl1_t}}</b><p>{{pl1_d}}</p><span class="st on">{{st_on}}</span></div>
+    <div><b>{{pl2_t}}</b><p>{{pl2_d}}</p><span class="st soon">{{st_soon}}</span></div>
+    <div><b>{{pl3_t}}</b><p>{{pl3_d}}</p><span class="st soon">{{st_soon}}</span></div>
+    <div><b>{{pl4_t}}</b><p>{{pl4_d}}</p><span class="st plan">{{st_plan}}</span></div>
+  </div>
+</section>
+
+<section id="demo" class="wrap" style="padding-top:80px;padding-bottom:104px">
+  <div class="demo">
+    <div><h2 style="font-size:clamp(30px,3.4vw,44px);line-height:1.1;margin-bottom:16px">{{demo_title}}</h2><p style="font-size:17px;color:var(--muted);margin:0">{{demo_text}}</p></div>
+    <form id="demoform" novalidate data-ok="{{form_ok}}" data-err="{{form_err}}" data-invalid="{{form_invalid}}">
+      <input type="hidden" name="lang" value="{{lang}}">
+      <label>{{f_name}}<input name="name" autocomplete="name" required placeholder="{{f_name_ph}}"></label>
+      <label>{{f_email}}<input name="email" type="email" autocomplete="email" required placeholder="{{f_email_ph}}"></label>
+      <label>{{f_org}}<input name="organization" autocomplete="organization" placeholder="{{f_org_ph}}"></label>
+      <label>{{f_screens}}<select name="screens"><option>1–10</option><option>11–50</option><option>51–200</option><option>200+</option></select></label>
+      <label class="full">{{f_msg}}<textarea name="message" rows="3" placeholder="{{f_msg_ph}}"></textarea></label>
+      <div class="hp" aria-hidden="true"><label>Website<input name="website" tabindex="-1" autocomplete="off"></label></div>
+      <button class="btn primary full" type="submit">{{f_submit}}</button>
+      <p class="formmsg" role="status" aria-live="polite"></p>
+    </form>
+  </div>
+</section>
+</main>
+
+<footer><div class="wrap">
+  <div style="max-width:320px"><a class="brand" href="{{root}}{{lang_path}}" style="font-size:18px;margin-bottom:10px"><i style="width:22px;height:22px;border-radius:6px"></i>Qivomedia</a><p style="margin:0">{{footer_tag}}</p></div>
+  <div class="cols">
+    <div><b>{{fc_product}}</b><a href="#product">{{nav_product}}</a><a href="#pricing">{{nav_pricing}}</a><a href="#hosting">{{nav_hosting}}</a></div>
+    <div><b>{{fc_solutions}}</b><a href="#universities">{{nav_universities}}</a><a href="#product">{{fc_retail}}</a><a href="#product">{{fc_corporate}}</a></div>
+    <div><b>{{fc_company}}</b><a href="#demo">{{fc_contact}}</a><a href="{{app_url}}">{{sign_in}}</a></div>
+  </div>
+</div></footer>
+
+<script id="i18n-alert" type="application/json">{{alert_json}}</script>
+<script src="{{root}}assets/site.js?v={{build}}" defer></script>
+</body>
+</html>
