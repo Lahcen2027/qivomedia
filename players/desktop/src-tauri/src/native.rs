@@ -1,6 +1,8 @@
 //! What the native shell adds to the web player: device health, screenshots,
-//! reboot, display power, keep-awake and autostart. Windows-only pieces are behind
-//! `cfg(windows)`; elsewhere they report "not supported" so the app still runs for testing.
+//! reboot, display power, keep-awake and autostart.
+//! Windows: Win32 APIs. Linux (kiosk boxes on Debian with X11): systemd + xset.
+//! The app reports which commands work on this machine (`capabilities`), and the
+//! dashboard only offers those.
 
 use std::{io::Cursor, sync::Mutex};
 
@@ -78,7 +80,46 @@ pub fn capabilities() -> Vec<&'static str> {
     if cfg!(windows) {
         c.extend(["reboot", "display_off", "display_on"]);
     }
+    #[cfg(target_os = "linux")]
+    {
+        if std::path::Path::new("/run/systemd/system").exists() {
+            c.push("reboot");
+        }
+        if x11() && x11_has_dpms() {
+            c.extend(["display_off", "display_on"]);
+        }
+    }
     c
+}
+
+/// An X11 session with `xset` available (screen power and blanking control).
+#[cfg(target_os = "linux")]
+fn x11() -> bool {
+    std::env::var_os("DISPLAY").is_some() && std::env::var_os("WAYLAND_DISPLAY").is_none() && which("xset")
+}
+
+/// The X server can switch the screen's power (not true of virtual displays).
+#[cfg(target_os = "linux")]
+fn x11_has_dpms() -> bool {
+    static HAS: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *HAS.get_or_init(|| {
+        std::process::Command::new("xset")
+            .arg("q")
+            .output()
+            .map(|o| String::from_utf8_lossy(&o.stdout).contains("DPMS is"))
+            .unwrap_or(false)
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn which(cmd: &str) -> bool {
+    std::env::var_os("PATH").map(|p| std::env::split_paths(&p).any(|d| d.join(cmd).is_file())).unwrap_or(false)
+}
+
+#[cfg(target_os = "linux")]
+fn xset(args: &[&str]) -> Result<(), String> {
+    let st = std::process::Command::new("xset").args(args).status().map_err(|e| e.to_string())?;
+    if st.success() { Ok(()) } else { Err(format!("xset {} failed", args.join(" "))) }
 }
 
 /// JPEG of the primary screen, at most 1920 px wide, base64-encoded.
@@ -108,8 +149,15 @@ pub fn reboot() -> Result<(), String> {
             .map(|_| ())
             .map_err(|e| e.to_string())
     }
-    #[cfg(not(windows))]
-    Err("reboot is only supported on Windows".into())
+    #[cfg(target_os = "linux")]
+    {
+        // Allowed for the kiosk account by the polkit rule that setup-kiosk.sh installs.
+        crate::config::log("reboot requested from the dashboard");
+        let out = std::process::Command::new("systemctl").arg("reboot").output().map_err(|e| e.to_string())?;
+        if out.status.success() { Ok(()) } else { Err(String::from_utf8_lossy(&out.stderr).trim().to_owned()) }
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
+    Err("reboot is not supported on this system".into())
 }
 
 /// Turn the screen's signal off (most monitors and many TVs go to standby) or back on.
@@ -126,10 +174,24 @@ pub fn display_power(on: bool) -> Result<(), String> {
         }
         Ok(())
     }
-    #[cfg(not(windows))]
+    #[cfg(target_os = "linux")]
+    {
+        if !x11() || !x11_has_dpms() {
+            return Err("screen power needs an X11 display with power management (DPMS)".into());
+        }
+        if on {
+            xset(&["dpms", "force", "on"])?;
+            xset(&["s", "reset"])?;
+            xset(&["-dpms"]) // and never blank again by itself
+        } else {
+            xset(&["+dpms"])?;
+            xset(&["dpms", "force", "off"])
+        }
+    }
+    #[cfg(not(any(windows, target_os = "linux")))]
     {
         let _ = on;
-        Err("display power is only supported on Windows".into())
+        Err("display power is not supported on this system".into())
     }
 }
 
@@ -140,6 +202,30 @@ pub fn keep_awake() {
     unsafe {
         use windows_sys::Win32::System::Power::{SetThreadExecutionState, ES_CONTINUOUS, ES_DISPLAY_REQUIRED, ES_SYSTEM_REQUIRED};
         SetThreadExecutionState(ES_CONTINUOUS | ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED);
+    }
+    #[cfg(target_os = "linux")]
+    if x11() {
+        // No screensaver, no blanking, no power saving.
+        let _ = xset(&["s", "off"]);
+        let _ = xset(&["s", "noblank"]);
+        let _ = xset(&["-dpms"]);
+    }
+}
+
+/// Start the player when this user's desktop session starts (XDG autostart).
+#[cfg(target_os = "linux")]
+pub fn set_autostart(on: bool) {
+    let dir = std::env::var("XDG_CONFIG_HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".config"))
+        .join("autostart");
+    let file = dir.join("qivomedia-player.desktop");
+    if on {
+        let Ok(exe) = std::env::current_exe() else { return };
+        let _ = std::fs::create_dir_all(&dir);
+        let _ = std::fs::write(file, format!("[Desktop Entry]\nType=Application\nName=Qivomedia Player\nExec=\"{}\"\nX-GNOME-Autostart-enabled=true\n", exe.display()));
+    } else {
+        let _ = std::fs::remove_file(file);
     }
 }
 

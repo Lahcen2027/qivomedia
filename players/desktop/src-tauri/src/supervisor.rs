@@ -3,6 +3,7 @@
 //!   * crashes or exits (except when a technician chose "Exit player"),
 //!   * hangs: the player page stops sending heartbeats for 2 minutes,
 //!   * reaches the daily restart time (default 04:00), which clears slow leaks.
+//!
 //! Restarts back off when the player keeps failing, so a broken setup doesn't spin the CPU.
 
 use std::{
@@ -34,7 +35,7 @@ pub fn run(extra_args: &[String]) -> i32 {
         config::log("supervisor: another copy is already running, exiting");
         return 0;
     };
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     crate::native::set_autostart(Config::load().autostart);
     config::log(&format!("supervisor: started (version {})", env!("CARGO_PKG_VERSION")));
 

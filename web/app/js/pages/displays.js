@@ -64,10 +64,11 @@ export async function render(root) {
   window.addEventListener("qivo:live", onLive);
 }
 
-// ---- native players (Windows app) ----
+// ---- native players (Qivomedia desktop app on Windows / Linux) ----
 const nat = (d) => d.player_info?.native || null;
 const caps = (d) => nat(d)?.capabilities || [];
 const pct = (v) => (v == null ? "–" : `${Math.round(v)}%`);
+const appName = (n) => (n.platform === "windows" ? "Windows app" : n.platform === "linux" ? "Linux app" : "Desktop app");
 const primaryMonitor = (n) => (n?.monitors || []).find((m) => m.primary) || n?.monitors?.[0];
 
 function deviceCell(d) {
@@ -76,7 +77,7 @@ function deviceCell(d) {
   const m = primaryMonitor(n);
   const res = m ? `${m.width}×${m.height}${m.hz ? ` @ ${Math.round(m.hz)}Hz` : ""}` : "";
   const warn = (n.disk_free_gb != null && n.disk_free_gb < 5) || (n.temperature_c != null && n.temperature_c >= 85);
-  return `<span class="badge acc">Windows app</span> ${esc(res)}
+  return `<span class="badge acc">${appName(n)}</span> ${esc(res)}
     <div class="faint ${warn ? "bad" : ""}">CPU ${pct(n.cpu_percent)}${n.temperature_c != null ? ` · ${n.temperature_c}°C` : ""}${n.disk_free_gb != null ? ` · ${n.disk_free_gb} GB free` : ""}</div>`;
 }
 
@@ -95,12 +96,12 @@ function healthPanel(d) {
   return `<div class="small muted" style="margin-bottom:6px">Device health · reported ${ago(d.last_seen)}</div>
     <div style="display:grid;grid-template-columns:auto 1fr auto 1fr;gap:4px 14px">
       ${row("Computer", esc(n.hostname || "–"))}${row("System", esc(n.os || n.platform))}
-      ${row("Player", `Windows app v${esc(n.app_version)}`)}${row("Uptime", fmtUptime(n.uptime_s))}
+      ${row("Player", `${appName(n)} v${esc(n.app_version)}`)}${row("Uptime", fmtUptime(n.uptime_s))}
       ${row("CPU", `${pct(n.cpu_percent)} of ${n.cpu_cores} cores`)}${row("Memory", `${n.memory_used_mb} / ${n.memory_total_mb} MB`)}
       ${row("Disk free", n.disk_free_gb != null ? `${n.disk_free_gb} of ${n.disk_total_gb} GB` : "–")}${row("Temperature", n.temperature_c != null ? `${n.temperature_c} °C` : "not reported")}
       ${row("Screen", m ? `${m.width}×${m.height}${m.hz ? ` @ ${Math.round(m.hz)} Hz` : ""}, scale ${Math.round((m.scale || 1) * 100)}%` : "–")}${row("Screens", String(n.monitors?.length || 0))}
     </div>
-    ${low4k ? `<p class="small" style="color:var(--warn)">Unusual Windows scaling on a 4K screen: set it to 100%, 150% or 200% for pixel-sharp text.</p>` : ""}`;
+    ${low4k ? `<p class="small" style="color:var(--warn)">Unusual display scaling on a 4K screen: set it to 100%, 150% or 200% for pixel-sharp text.</p>` : ""}`;
 }
 
 function nativeButtons(d) {
@@ -115,7 +116,7 @@ function nativeButtons(d) {
 }
 
 async function sendNative(d, command) {
-  if (command === "reboot" && !(await confirmDialog("Restart this computer?", `${d.name} will go dark for about a minute while Windows restarts.`, "Restart"))) return;
+  if (command === "reboot" && !(await confirmDialog("Restart this computer?", `${d.name} will go dark for about a minute while the computer restarts.`, "Restart"))) return;
   const r = await guard(() => api(`/displays/${d.id}/command`, { method: "POST", body: { command } }));
   if (r) toast(r.delivered ? `Sent to ${d.name}` : `${d.name} is offline — command not delivered`, !r.delivered);
 }

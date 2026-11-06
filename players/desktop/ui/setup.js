@@ -8,7 +8,7 @@ const T = {
     connecting_title: "Connexion…", connecting_to: "En attente de", change_server: "Changer de serveur",
     setup_title: "Configurer cet écran", setup_lead: "Saisissez l'adresse de votre serveur Qivomedia. L'écran affichera ensuite un code à saisir dans le tableau de bord.",
     server: "Adresse du serveur", test: "Tester", restart: "Redémarrage quotidien", restart_help: "Garde l'écran fluide. Laissez vide pour jamais.",
-    autostart: "Démarrer avec Windows", save: "Enregistrer et démarrer", keys: "Ctrl+Maj+F10 ouvre cet écran depuis le lecteur.", quit: "Quitter le lecteur",
+    autostart: "Démarrer automatiquement avec l'ordinateur", save: "Enregistrer et démarrer", keys: "Ctrl+Maj+F10 ouvre cet écran depuis le lecteur.", quit: "Quitter le lecteur",
     ok: "Serveur joignable ✓", unreachable: "Serveur injoignable — vérifiez l'adresse et le réseau.", retry: "Nouvel essai dans 10 s…",
   },
 };

@@ -1,0 +1,134 @@
+name: Desktop player
+
+on:
+  push:
+    branches: [main]
+    paths: ["players/desktop/**", ".github/workflows/desktop-player.yml"]
+  pull_request:
+    paths: ["players/desktop/**"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    name: Windows installer
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: players/desktop/src-tauri
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: players/desktop/src-tauri
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Unit tests
+        run: cargo test --locked
+      - name: Check the kiosk script parses
+        shell: pwsh
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile("$PWD/../kiosk/setup-kiosk.ps1", [ref]$null, [ref]$errors) | Out-Null
+          if ($errors) { $errors | Format-List; exit 1 }
+      - name: Build installers (NSIS .exe + MSI)
+        run: npx --yes @tauri-apps/cli@2 build
+      - name: Collect files
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force out | Out-Null
+          Copy-Item target/release/bundle/nsis/*.exe out/
+          Copy-Item target/release/bundle/msi/*.msi out/
+          Copy-Item target/release/qivo-player.exe out/
+          Copy-Item ../kiosk/setup-kiosk.ps1 out/
+          Get-ChildItem out | Format-Table Name, Length
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qivomedia-player-windows
+          path: players/desktop/src-tauri/out/
+          if-no-files-found: error
+
+  linux:
+    name: Linux packages (.deb, AppImage)
+    # Built on Ubuntu 24.04 (glibc 2.39): runs on Debian 13 and Ubuntu 24.04 or newer.
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: players/desktop/src-tauri
+    steps:
+      - uses: actions/checkout@v4
+      - name: System libraries
+        working-directory: .
+        run: |
+          sudo apt-get update -q
+          sudo apt-get install -y -q libwebkit2gtk-4.1-dev librsvg2-dev libxdo-dev libpipewire-0.3-dev libgbm-dev libegl-dev libxcb1-dev libxrandr-dev libdbus-1-dev clang shellcheck
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: players/desktop/src-tauri
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Unit tests and lint
+        run: |
+          cargo test --locked
+          cargo clippy --locked -- -D warnings
+      - name: Check the kiosk script
+        run: shellcheck -S warning ../kiosk/setup-kiosk.sh
+      - name: Build packages
+        run: npx --yes @tauri-apps/cli@2 build --bundles deb,appimage
+      - name: Collect files
+        run: |
+          mkdir -p out
+          cp target/release/bundle/deb/*.deb out/qivomedia-player_amd64.deb
+          cp target/release/bundle/appimage/*.AppImage out/ 2>/dev/null || true
+          cp ../kiosk/setup-kiosk.sh out/
+          ls -la out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qivomedia-player-linux
+          path: players/desktop/src-tauri/out/
+          if-no-files-found: error
+
+  debian-kiosk:
+    name: Install on Debian 13 with the kiosk script
+    needs: linux
+    runs-on: ubuntu-24.04
+    container: debian:trixie
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: qivomedia-player-linux
+          path: pkg
+      - name: Run setup-kiosk.sh as on a real box
+        run: |
+          apt-get update -q && apt-get install -y -q --no-install-recommends ca-certificates xvfb xauth procps
+          bash pkg/setup-kiosk.sh --server signage.example.ma --deb pkg/qivomedia-player_amd64.deb --rotate left
+      - name: Check the result
+        run: |
+          set -x
+          ! ldd /usr/bin/qivo-player | grep "not found"
+          grep -q '"server_url": "https://signage.example.ma"' /etc/qivomedia-player/defaults.json
+          id signage
+          grep -q "autologin signage" /etc/systemd/system/getty@tty1.service.d/autologin.conf
+          grep -q "qivo-player" /home/signage/.config/openbox/autostart
+          grep -q "rotate left" /home/signage/.config/openbox/autostart
+          grep -q "startx -- -nocursor" /home/signage/.profile
+          test -f /etc/polkit-1/rules.d/50-qivomedia-reboot.rules
+          # Second run must also succeed (re-running to change the server).
+          bash pkg/setup-kiosk.sh --server http://10.0.0.5:8080
+          grep -q '"server_url": "http://10.0.0.5:8080"' /etc/qivomedia-player/defaults.json
+          [ "$(grep -c 'startx -- -nocursor' /home/signage/.profile)" = 1 ]
+      - name: The player starts on Debian (virtual screen)
+        run: |
+          export QIVO_PLAYER_HOME=/tmp/qp
+          timeout 25 xvfb-run -a -s "-screen 0 1920x1080x24" qivo-player --no-supervisor || true
+          cat /tmp/qp/player.log
+          grep -q "player: starting" /tmp/qp/player.log
+          grep -q "not reachable yet, showing the connecting screen" /tmp/qp/player.log

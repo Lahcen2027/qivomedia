@@ -139,7 +139,7 @@ async fn save_config(app: tauri::AppHandle, window: WebviewWindow, server_url: S
     }
     if let Some(a) = autostart {
         cfg.autostart = a;
-        #[cfg(windows)]
+        #[cfg(any(windows, target_os = "linux"))]
         native::set_autostart(a);
     }
     cfg.save().map_err(|e| format!("could not save settings: {e}"))?;

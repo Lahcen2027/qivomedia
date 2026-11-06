@@ -22,7 +22,7 @@ const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls)
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const deviceKey = () => localStorage.getItem(LS.key);
-// Inside the Qivomedia Windows app: native functions (screenshot, reboot, device health…).
+// Inside the Qivomedia desktop app (Windows / Linux): native functions (screenshot, reboot, device health…).
 // The app only lets pages from its configured server call these.
 const NATIVE = window.__TAURI_INTERNALS__ && !PREVIEW && !DEMO ? (cmd, args) => window.__TAURI_INTERNALS__.invoke(cmd, args) : null;
 
@@ -506,7 +506,7 @@ async function reportStatus() {
       user_agent: navigator.userAgent, screen: `${screen.width}x${screen.height}`, viewport: `${innerWidth}x${innerHeight}`,
       uptime_s: Math.round((Date.now() - startedAt) / 1000), pop_queue: JSON.parse(localStorage.getItem(LS.pop) || "[]").length,
       language: navigator.language, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
-      player: native ? `windows/${native.app_version}` : "web/0.1", native,
+      player: native ? `${native.platform}/${native.app_version}` : "web/0.1", native,
     },
   }));
 }

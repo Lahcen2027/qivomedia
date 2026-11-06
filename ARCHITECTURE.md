@@ -94,12 +94,14 @@ CMS, web player, pairing, layouts/zones, playlists/widgets, scheduling, triggers
 - Manifest bundles cached per organization and computed once (single-flight), emptied on any content change. Refreshes carry `spread_ms` so large fleets don't all download at once.
 - Load generator in `tools/loadtest`, with results in `STRESS-TEST.md`.
 
-**Phase 1.11 — built (v0.8): Windows player, first version** (`players/windows`)
-- Tauri 2 app (Rust + WebView2) that loads the server's web player, so a server update reaches every screen with no reinstall. Setup screen in EN/FR; tries HTTPS then HTTP; machine-wide defaults (`%ProgramData%`) and `--server` for mass deployment.
+**Phase 1.11 — built (v0.8): desktop player for Windows and Linux** (`players/desktop`)
+- Tauri 2 app (Rust; WebView2 on Windows, WebKitGTK on Linux) that loads the server's web player, so a server update reaches every screen with no reinstall. Setup screen in EN/FR; tries HTTPS then HTTP; machine-wide defaults (`%ProgramData%`) and `--server` for mass deployment.
 - Kiosk: full screen, always on top, hidden cursor, autoplay with sound, keep-awake. Watchdog supervisor restarts the player on crash, freeze (no heartbeat for 2 min) or exit, plus a daily restart, with back-off.
 - Dashboard: live screenshot, device health (CPU, memory, disk, temperature, uptime, resolution, refresh rate, scaling) and remote Restart player / Restart computer / Screen off-on (admin-only, audit-logged).
 - Native functions are callable only from the configured server's origin (Tauri capabilities). Setup functions stay local.
-- `kiosk/setup-kiosk.ps1`: signage account, auto sign-in, Shell Launcher (no desktop), no sleep or lock screen, update restarts outside 06:00–23:00. GitHub Actions builds the NSIS and MSI installers on Windows.
+- `kiosk/setup-kiosk.ps1` (Windows): signage account, auto sign-in, Shell Launcher (no desktop), no sleep or lock screen, update restarts outside 06:00–23:00.
+- `kiosk/setup-kiosk.sh` (Debian 13, e.g. HP t430 thin clients after removing ThinPro): X11 + Openbox kiosk session with auto sign-in, Intel VA-API decoding with GStreamer GL zero-copy, PipeWire audio, Arabic fonts, polkit rule for remote restart, small logs for eMMC, unattended security updates with a 03:30 restart, optional portrait rotation.
+- CI builds the NSIS and MSI installers on Windows and the .deb and AppImage on Linux, then installs the .deb with the kiosk script on a real Debian 13 container and starts the player there.
 
 **Phase 2 — Production hardening (next 4–6 weeks)**
 - Postgres backend + S3/R2 media storage + signed URLs; Redis or Postgres LISTEN/NOTIFY so several server instances share the event bus
@@ -110,7 +112,7 @@ CMS, web player, pairing, layouts/zones, playlists/widgets, scheduling, triggers
 - Browser end-to-end tests (Playwright) in CI
 
 **Phase 3 — Players everywhere**
-- **Windows player**, next steps after v0.8:
+- **Desktop player (Windows / Linux)**, next steps after v0.8:
   - Silent self-update of the app itself (signed updates served by the Qivomedia server)
   - Display on/off **schedule** (per group, e.g. 07:00–22:00) and HDMI-CEC TV power through a USB adapter; volume control
   - Alerts when a screen goes offline, runs hot or is low on disk (email/WhatsApp)
