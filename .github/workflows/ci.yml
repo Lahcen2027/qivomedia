@@ -69,7 +69,7 @@ jobs:
             docker run --rm --env-file /tmp/caddy.env -v "$PWD/deploy/$f:/etc/caddy/Caddyfile:ro" caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
           done
       - name: Scan the image for known vulnerabilities (Trivy)
-        uses: aquasecurity/trivy-action@0.28.0
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: qivomedia:ci
           severity: CRITICAL,HIGH
