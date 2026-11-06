@@ -1,3 +1,4 @@
 /target
 /data
 /deploy/.env
+tools/loadtest/target/
