@@ -1,0 +1,15 @@
+# Local / LAN quick start (plain HTTP on port 8080). For a public server with HTTPS use deploy/docker-compose.prod.yml — see DEPLOY.md.
+services:
+  qivomedia:
+    build: .
+    ports:
+      - "8080:8080"
+    volumes:
+      - qivo-data:/data
+    environment:
+      RUST_LOG: qivo_server=info
+      # Set to 1 to let anyone create a new organization (SaaS mode).
+      QIVO_ALLOW_SIGNUP: "0"
+    restart: unless-stopped
+volumes:
+  qivo-data:

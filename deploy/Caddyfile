@@ -1,0 +1,34 @@
+{
+	email {$ACME_EMAIL}
+}
+
+# Redirect www to the main domain.
+www.{$QIVO_DOMAIN} {
+	redir https://{$QIVO_DOMAIN}{uri} permanent
+}
+
+{$QIVO_DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+
+	# WebSockets (/ws/player, /ws/admin) are proxied automatically.
+	# Uploads can be large (videos): no body limit here; the app caps at 4 GiB.
+	reverse_proxy qivomedia:8080 {
+		flush_interval -1
+		transport http {
+			read_timeout 30m
+			write_timeout 30m
+		}
+	}
+
+	log {
+		output stdout
+		format console
+	}
+}

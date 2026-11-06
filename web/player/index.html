@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#000000">
+<title>Qivomedia Player</title>
+<link rel="manifest" href="/player/manifest.webmanifest">
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #000; overflow: hidden; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; cursor: none; }
+  #viewport { position: fixed; inset: 0; display: grid; place-items: center; background: #000; }
+  .stage { position: absolute; left: 50%; top: 50%; transform-origin: 0 0; overflow: hidden; }
+  .region { position: absolute; overflow: hidden; }
+  .slot { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+  .slot > img, .slot > video, .slot > iframe { width: 100%; height: 100%; border: 0; display: block; }
+  .fit-contain { object-fit: contain; } .fit-cover { object-fit: cover; } .fit-fill { object-fit: fill; }
+
+  /* transitions */
+  .tr-fade { animation: fadeIn .8s ease both; }
+  .tr-slide { animation: slideIn .8s cubic-bezier(.2,.7,.2,1) both; }
+  .tr-zoom { animation: zoomIn .8s cubic-bezier(.2,.7,.2,1) both; }
+  .out-fade { animation: fadeOut .8s ease both; }
+  .out-slide { animation: slideOut .8s cubic-bezier(.2,.7,.2,1) both; }
+  .out-zoom { animation: fadeOut .8s ease both; }
+  @keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
+  @keyframes fadeOut { from { opacity: 1 } to { opacity: 0 } }
+  @keyframes slideIn { from { transform: translateX(100%) } to { transform: none } }
+  @keyframes slideOut { from { transform: none } to { transform: translateX(-100%) } }
+  @keyframes zoomIn { from { transform: scale(1.08); opacity: 0 } to { transform: none; opacity: 1 } }
+
+  /* widgets */
+  .w-text { width: 100%; height: 100%; display: flex; padding: 3%; line-height: 1.15; white-space: pre-wrap; word-break: break-word; }
+  .w-ticker { width: 100%; height: 100%; display: flex; align-items: center; overflow: hidden; white-space: nowrap; }
+  .w-ticker span { display: inline-block; padding-left: 100%; animation: ticker linear infinite; }
+  @keyframes ticker { from { transform: translateX(0) } to { transform: translateX(-100%) } }
+  .w-clock, .w-countdown, .w-weather { width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; font-variant-numeric: tabular-nums; text-align: center; }
+  .w-clock .t, .w-countdown .t { font-weight: 700; letter-spacing: -0.02em; }
+  .w-weather .temp { font-weight: 700; }
+
+  /* system screens */
+  .sys { position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2.2vmin;
+         color: #e8ecf3; background: radial-gradient(1200px 700px at 20% 10%, #18233f 0%, #0a0d16 60%); text-align: center; z-index: 50; }
+  .sys .brand { font-weight: 800; letter-spacing: .02em; font-size: 3.2vmin; display: flex; gap: 1.2vmin; align-items: center; }
+  .sys .brand i { width: 3vmin; height: 3vmin; border-radius: 1vmin; background: linear-gradient(135deg, #6ee7ff, #7c5cff); display: inline-block; }
+  .sys .code { font: 800 15vmin/1 ui-monospace, "SF Mono", Menlo, monospace; letter-spacing: .12em; padding: 3vmin 5vmin; border-radius: 3vmin;
+               background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.12); }
+  .sys p { margin: 0; font-size: 2.4vmin; color: #a9b3c7; max-width: 70vmin; line-height: 1.5; }
+  .sys .small { font-size: 1.6vmin; opacity: .6; }
+  .overlay { position: fixed; z-index: 60; left: 3vmin; bottom: 3vmin; padding: 2vmin 3vmin; border-radius: 2vmin; background: rgba(10,13,22,.85);
+             color: #fff; font-size: 2.6vmin; border: 1px solid rgba(255,255,255,.15); backdrop-filter: blur(8px); }
+  .overlay b { display: block; font-size: 4vmin; }
+  .progress { width: 40vmin; height: .8vmin; border-radius: 1vmin; background: rgba(255,255,255,.1); overflow: hidden; }
+  .progress > div { height: 100%; width: 0; background: linear-gradient(90deg, #6ee7ff, #7c5cff); transition: width .3s; }
+  .preview-badge { position: fixed; top: 12px; right: 12px; z-index: 70; background: #7c5cff; color: #fff; font: 600 12px system-ui; padding: 6px 10px; border-radius: 99px; cursor: default; }
+</style>
+</head>
+<body>
+<div id="viewport"></div>
+<script type="module" src="/player/player.js"></script>
+</body>
+</html>
