@@ -40,12 +40,12 @@ export function logout() {
   location.reload();
 }
 
-export function toast(msg, err = false) {
+export function toast(msg, err = false, ms) {
   const t = document.createElement("div");
   t.className = `toast ${err ? "err" : ""}`;
   t.textContent = msg;
   document.getElementById("toasts").appendChild(t);
-  setTimeout(() => t.remove(), err ? 6000 : 3200);
+  setTimeout(() => t.remove(), ms || (err ? 6000 : 3200));
 }
 
 /** Run an async action, toasting any error. */

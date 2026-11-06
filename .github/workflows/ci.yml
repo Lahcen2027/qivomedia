@@ -1,0 +1,53 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --locked
+      - name: Test
+        run: cargo test --locked
+      - name: Check web player and dashboard JavaScript
+        run: |
+          node --check web/player/player.js
+          for f in web/shared/*.js web/app/js/*.js web/app/js/pages/*.js; do node --check "$f"; done
+      - name: Build website
+        run: python3 site/build.py
+      - name: Validate production compose files
+        run: |
+          docker compose -f deploy/docker-compose.prod.yml --env-file deploy/.env.example config --quiet
+          sed 's/^CADDYFILE=.*/CADDYFILE=Caddyfile.saas/' deploy/.env.example > /tmp/saas.env
+          docker compose -f deploy/docker-compose.prod.yml --env-file /tmp/saas.env config --quiet
+
+  docker:
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the production image
+        run: docker build -t qivomedia:ci .
+      - name: Start it and check health
+        run: |
+          docker run -d --name qivo -p 8080:8080 qivomedia:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://localhost:8080/api/health; then echo; break; fi
+            sleep 1
+          done
+          curl -fsS http://localhost:8080/api/health
+          docker exec qivo qivo-server healthcheck
+          docker exec qivo qivo-server backup /data/backups/ci.db
+      - name: Validate Caddy configs
+        run: |
+          printf 'QIVO_DOMAIN=example.com\nACME_EMAIL=ops@example.com\n' > /tmp/caddy.env
+          for f in Caddyfile Caddyfile.saas; do
+            docker run --rm --env-file /tmp/caddy.env -v "$PWD/deploy/$f:/etc/caddy/Caddyfile:ro" caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+          done

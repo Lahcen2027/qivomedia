@@ -300,6 +300,9 @@ async fn rotate_hook(State(state): State<AppState>, user: AuthUser) -> AppResult
 /// Body is either JSON `{action: "start"|"clear", kind, title, message, color, target_type, target_id, test}`
 /// or a CAP 1.2 XML alert (msgType Alert/Update starts, Cancel clears).
 async fn webhook(State(state): State<AppState>, Path(key): Path<String>, headers: HeaderMap, body: String) -> AppResult<Json<Value>> {
+    if !crate::ratelimit::allow(&format!("alerthook:{key}"), 60, crate::ratelimit::MIN) {
+        return Err(AppError::TooMany("too many alert requests — max 60 per minute".into()));
+    }
     let org: Option<String> = sqlx::query_scalar("SELECT id FROM organizations WHERE alert_hook_key = ? AND suspended = 0")
         .bind(&key).fetch_optional(&state.db).await?;
     let org = org.ok_or(AppError::NotFound)?;

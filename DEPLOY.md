@@ -88,7 +88,28 @@ qivo exec qivomedia qivo-server make-admin colleague@example.com
 
 The **Create with AI** button then appears in **Layouts**, and an **Ask AI to change** bar appears in the layout designer. Everything the AI makes is a draft. It isn't shown on any screen until someone assigns it. Each AI design is usually a few thousand tokens. The Platform page shows token use per month so you can watch the cost.
 
-## 9. Website + app on qivomedia.com (SaaS mode)
+## 9. Set up email
+
+Email is used for **password resets**, **team invitations** and **new demo-request alerts**. Any SMTP provider works, for example Brevo, Mailjet, Amazon SES, Google Workspace or Microsoft 365. Add your provider's settings to `deploy/.env`:
+
+```
+SMTP_HOST=smtp-relay.brevo.com
+SMTP_PORT=587
+SMTP_TLS=starttls
+SMTP_USER=your-login
+SMTP_PASSWORD=your-smtp-key
+SMTP_FROM=Qivomedia <no-reply@qivomedia.com>
+QIVO_PUBLIC_URL=https://app.qivomedia.com
+```
+
+Then run `qivo up -d`.
+
+- So that your emails don't land in spam, add your provider's **SPF and DKIM** records to your domain's DNS. Every provider documents the exact records.
+- **Without email**, everything still works. Reset links are written to the log (`qivo logs qivomedia | grep reset`), and you can add team members with a temporary password instead of an invitation.
+
+**Security built in:** an account locks for 15 minutes after 5 wrong passwords. Reset links are single-use and expire after 1 hour (7 days for invitations). Changing or resetting a password signs that person out everywhere else. Sign-ups, reset requests, screen registrations and webhooks are all rate-limited.
+
+## 10. Website + app on qivomedia.com (SaaS mode)
 
 For your own SaaS you can run the public website on the main domain and the app on `app.` with the same server:
 
@@ -158,4 +179,5 @@ qivo start qivomedia
 | Screen stuck on "Loading content…" | Open `https://your-domain/api/health` on that screen's browser. It should say `ok`. |
 | Screen shows "Offline" in the dashboard but plays | It's playing from its cache. Check that device's network. It reconnects automatically. |
 | Upload fails for big videos | Check free disk space with `df -h`. |
-| Forgot the owner password | Ask another admin to reset it from **Team**. A self-service reset is on the roadmap. |
+| Forgot a password | Use **Forgot your password?** on the sign-in page. Without email set up, copy the link from `qivo logs qivomedia`. |
+| "Too many failed attempts" | The account locks for 15 minutes after 5 wrong passwords. Wait, or reset the password. |

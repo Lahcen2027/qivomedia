@@ -23,7 +23,8 @@ if [ ! -f deploy/.env ]; then
       deploy/.env.example > deploy/.env
   echo "-> Wrote deploy/.env"
 fi
-. deploy/.env
+# Read only what we need (the file is not a shell script: values may contain < > or spaces).
+QIVO_DOMAIN="$(grep -E '^QIVO_DOMAIN=' deploy/.env | head -1 | cut -d= -f2- | tr -d '\r"' )"
 
 # 3. DNS sanity check
 SERVER_IP="$(curl -fsS https://api.ipify.org || true)"

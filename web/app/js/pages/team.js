@@ -22,9 +22,18 @@ export async function render(root) {
   page.querySelector("[data-new]")?.addEventListener("click", () => modal({
     title: "Add team member", submit: "Add",
     body: `<div class="fields2"><div class="field"><label>Name</label><input name="name" required></div><div class="field"><label>Email</label><input name="email" type="email" required></div></div>
-      <div class="fields2"><div class="field"><label>Temporary password</label><input name="password" type="text" minlength="8" required></div>
+      <div class="field"><label class="chk"><input type="checkbox" name="invite" checked> Email them an invitation — they choose their own password</label></div>
+      <div class="fields2"><div class="field" data-pw><label>Temporary password</label><input name="password" type="text" minlength="8"></div>
       <div class="field"><label>Role</label><select name="role"><option>editor</option><option>viewer</option><option>admin</option></select></div></div>`,
-    onSubmit: (f) => api("/users", { method: "POST", body: formData(f) }),
+    onOpen: (f) => {
+      const sync = () => { const inv = f.invite.checked; f.querySelector("[data-pw]").style.visibility = inv ? "hidden" : "visible"; f.password.required = !inv; };
+      f.invite.onchange = sync; sync();
+    },
+    onSubmit: async (f) => {
+      const v = formData(f);
+      await api("/users", { method: "POST", body: { ...v, invite: !!v.invite } });
+      toast(v.invite ? `Invitation sent to ${v.email}` : `${v.email} added — share the temporary password with them`);
+    },
   }).then((ok) => ok && rerender()));
   page.querySelector("[data-pw]").onclick = () => modal({
     title: "Change password", body: `<div class="field"><label>New password</label><input name="password" type="password" minlength="8" required autocomplete="new-password"></div>`,

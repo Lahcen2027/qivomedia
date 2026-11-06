@@ -161,6 +161,9 @@ async fn fire_manual(State(state): State<AppState>, user: AuthUser, Path(id): Pa
 
 /// Public webhook — the unguessable key *is* the credential.
 async fn fire_hook(State(state): State<AppState>, Path(key): Path<String>, body: Option<Json<FireReq>>) -> AppResult<Json<Value>> {
+    if !crate::ratelimit::allow(&format!("hook:{key}"), 120, crate::ratelimit::MIN) {
+        return Err(AppError::TooMany("trigger fired too often — max 120 per minute".into()));
+    }
     let t = sqlx::query_as::<_, Trigger>(&format!("SELECT {COLS} FROM triggers WHERE hook_key = ?"))
         .bind(&key)
         .fetch_optional(&state.db)

@@ -59,7 +59,8 @@ async function authScreen() {
     <div class="field"><label>Email</label><input name="email" type="email" required autocomplete="username"></div>
     <div class="field"><label>Password</label><input name="password" type="password" required minlength="8" autocomplete="${signup ? "new-password" : "current-password"}"></div>
     <button class="btn primary" style="width:100%;justify-content:center;padding:10px">${signup ? "Create workspace" : "Sign in"}</button>
-    ${!st.needs_setup && st.allow_signup ? `<p class="small muted" style="text-align:center;margin:14px 0 0">${signup ? `<a href="#/login">Have an account? Sign in</a>` : `<a href="#/signup">Create a new workspace</a>`}</p>` : ""}
+    ${!signup ? `<p class="small" style="text-align:center;margin:14px 0 0"><a href="#/forgot">Forgot your password?</a></p>` : ""}
+    ${!st.needs_setup && st.allow_signup ? `<p class="small muted" style="text-align:center;margin:10px 0 0">${signup ? `<a href="#/login">Have an account? Sign in</a>` : `<a href="#/signup">Create a new workspace</a>`}</p>` : ""}
   </form></div>`);
   app.appendChild(card);
   card.querySelector("form").onsubmit = async (e) => {
@@ -72,11 +73,69 @@ async function authScreen() {
       location.hash = "#/";
       start();
     } catch (err) {
-      toast(err.message === "authentication required" ? "Wrong email or password" : err.message, true);
+      toast(err.message === "authentication required" ? "Wrong email or password" : err.message, true, 9000);
       btn.disabled = false;
     }
   };
   card.querySelector("input").focus();
+}
+
+function authCard(inner) {
+  app.innerHTML = "";
+  const c = h(`<div class="auth"><form class="card"><div class="brand"><span class="logo"></span>Qivomedia</div>${inner}</form></div>`);
+  app.appendChild(c);
+  return c.querySelector("form");
+}
+
+function forgotScreen() {
+  const f = authCard(`<h1 style="margin-bottom:4px">Reset your password</h1>
+    <p class="muted" style="margin:0 0 20px">Enter your account email. We'll send you a link to choose a new password.</p>
+    <div class="field"><label>Email</label><input name="email" type="email" required autocomplete="username"></div>
+    <button class="btn primary" style="width:100%;justify-content:center;padding:10px">Send reset link</button>
+    <p class="small" style="text-align:center;margin:14px 0 0"><a href="#/login">Back to sign in</a></p>`);
+  f.email.focus();
+  f.onsubmit = async (e) => {
+    e.preventDefault();
+    const btn = f.querySelector("button"); btn.disabled = true;
+    try {
+      await api("/auth/forgot", { method: "POST", body: { email: f.email.value } });
+      f.innerHTML = `<div class="brand"><span class="logo"></span>Qivomedia</div><h1 style="margin-bottom:8px">Check your email</h1>
+        <p class="muted" style="margin:0 0 18px">If an account exists for <b>${esc(f.email?.value || "")}</b>, a reset link is on its way. It's valid for 1 hour.</p>
+        <p class="small muted">No email after a few minutes? Check spam, or ask your administrator to reset your password from Team.</p>
+        <p class="small" style="margin:14px 0 0"><a href="#/login">Back to sign in</a></p>`;
+    } catch (err) { toast(err.message, true); btn.disabled = false; }
+  };
+}
+
+async function resetScreen() {
+  const token = new URLSearchParams(location.hash.split("?")[1] || "").get("token") || "";
+  let info;
+  try { info = await api("/auth/token-info", { method: "POST", body: { token } }); }
+  catch (err) {
+    authCard(`<h1 style="margin-bottom:8px">Link expired</h1><p class="muted" style="margin:0 0 18px">${esc(err.message)}</p>
+      <a class="btn primary" href="#/forgot" style="width:100%;justify-content:center">Send a new link</a>`);
+    return;
+  }
+  const invite = info.purpose === "invite";
+  const f = authCard(`<h1 style="margin-bottom:4px">${invite ? `Welcome, ${esc(info.name)}` : "Choose a new password"}</h1>
+    <p class="muted" style="margin:0 0 20px">${invite ? "Choose a password to finish setting up your account" : "For"} <b>${esc(info.email)}</b>.</p>
+    <div class="field"><label>New password</label><input name="password" type="password" minlength="8" required autocomplete="new-password"></div>
+    <div class="field"><label>Repeat password</label><input name="password2" type="password" minlength="8" required autocomplete="new-password"></div>
+    <button class="btn primary" style="width:100%;justify-content:center;padding:10px">${invite ? "Create my account" : "Save password and sign in"}</button>`);
+  f.password.focus();
+  f.onsubmit = async (e) => {
+    e.preventDefault();
+    if (f.password.value.length < 8) return toast("Use at least 8 characters", true);
+    if (f.password.value !== f.password2.value) return toast("The two passwords don't match", true);
+    const btn = f.querySelector("button"); btn.disabled = true;
+    try {
+      const r = await api("/auth/reset", { method: "POST", body: { token, password: f.password.value } });
+      setToken(r.token);
+      history.replaceState(null, "", location.pathname + "#/");
+      toast(invite ? "Welcome to Qivomedia" : "Password changed — you're signed in");
+      start();
+    } catch (err) { toast(err.message, true); btn.disabled = false; }
+  };
 }
 
 // ---------- shell ----------
@@ -140,6 +199,9 @@ function live() {
 }
 
 async function start() {
+  const hash = location.hash;
+  if (hash.startsWith("#/reset")) return resetScreen();
+  if (hash.startsWith("#/forgot") && !store.token) return forgotScreen();
   if (!store.token) return authScreen();
   try {
     store.me = await api("/auth/me");
@@ -153,7 +215,10 @@ async function start() {
   alerts.refreshAlertBar();
 }
 
-window.addEventListener("hashchange", () => (store.me ? route() : authScreen()));
+window.addEventListener("hashchange", () => {
+  if (location.hash.startsWith("#/reset") || (!store.me && location.hash.startsWith("#/forgot"))) return start();
+  return store.me ? route() : authScreen();
+});
 start();
 
 export { can };

@@ -10,15 +10,19 @@ mod auth;
 mod displays;
 mod error;
 mod hub;
+mod mail;
 mod media;
 mod platform;
 mod player;
 mod public;
+mod ratelimit;
 mod reports;
 mod content;
 mod schedules;
 mod state;
 mod triggers;
+#[cfg(test)]
+mod tests;
 mod util;
 
 use std::{net::SocketAddr, path::PathBuf, str::FromStr};
@@ -93,6 +97,19 @@ async fn main() -> anyhow::Result<()> {
 
     let state = AppState::new(db, data_dir.clone(), allow_signup);
 
+    let app = build_app(state.clone(), &web_dir, &data_dir);
+
+    tokio::spawn(hub::presence_sweeper(state.clone()));
+
+    let addr = SocketAddr::from_str(&bind)?;
+    tracing::info!("Qivomedia listening on http://{addr}  (dashboard: /, player: /player)");
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    axum::serve(listener, app).with_graceful_shutdown(shutdown()).await?;
+    Ok(())
+}
+
+/// The whole HTTP application (also used by the in-process test suite).
+pub fn build_app(state: AppState, web_dir: &std::path::Path, data_dir: &std::path::Path) -> Router {
     let api = Router::new()
         .merge(auth::routes())
         .merge(media::routes())
@@ -115,7 +132,7 @@ async fn main() -> anyhow::Result<()> {
             HeaderValue::from_static("public, max-age=31536000, immutable"),
         ));
 
-    let app = Router::new()
+    Router::new()
         .nest("/api", api)
         .route("/ws/player", get(player::ws_handler))
         .route("/ws/admin", get(hub::admin_ws_handler))
@@ -126,17 +143,12 @@ async fn main() -> anyhow::Result<()> {
         )
         .nest_service("/shared", ServeDir::new(web_dir.join("shared")))
         .fallback_service(ServeDir::new(web_dir.join("app")).fallback(ServeFile::new(web_dir.join("app/index.html"))))
+        .layer(SetResponseHeaderLayer::if_not_present(header::X_CONTENT_TYPE_OPTIONS, HeaderValue::from_static("nosniff")))
+        .layer(SetResponseHeaderLayer::if_not_present(header::REFERRER_POLICY, HeaderValue::from_static("strict-origin-when-cross-origin")))
+        .layer(SetResponseHeaderLayer::if_not_present(header::X_FRAME_OPTIONS, HeaderValue::from_static("SAMEORIGIN")))
         .layer(CorsLayer::permissive())
         .layer(TraceLayer::new_for_http())
-        .with_state(state.clone());
-
-    tokio::spawn(hub::presence_sweeper(state.clone()));
-
-    let addr = SocketAddr::from_str(&bind)?;
-    tracing::info!("Qivomedia listening on http://{addr}  (dashboard: /, player: /player)");
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app).with_graceful_shutdown(shutdown()).await?;
-    Ok(())
+        .with_state(state)
 }
 
 /// Exit 0 if the local server answers /api/health (no curl needed in the slim image).

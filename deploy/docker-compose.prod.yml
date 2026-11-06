@@ -16,6 +16,14 @@ services:
       QIVO_ALLOW_SIGNUP: ${QIVO_ALLOW_SIGNUP:-0}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       QIVO_AI_MODEL: ${QIVO_AI_MODEL:-claude-sonnet-5-5}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_TLS: ${SMTP_TLS:-starttls}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-Qivomedia <no-reply@qivomedia.com>}
+      QIVO_NOTIFY_EMAIL: ${QIVO_NOTIFY_EMAIL:-}
+      QIVO_PUBLIC_URL: ${QIVO_PUBLIC_URL:-}
     volumes:
       - qivo-data:/data
     expose:

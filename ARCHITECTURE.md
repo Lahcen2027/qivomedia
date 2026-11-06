@@ -69,13 +69,18 @@ CMS, web player, pairing, layouts/zones, playlists/widgets, scheduling, triggers
 - **Public website** (`site/`): EN `/`, FR `/fr/`, AR `/ar/` (RTL) generated from one template plus `i18n.json`. The hero embeds the real player in demo mode (`/player/?demo=1`, which loads the layout chosen with "Show on website", or a built-in demo) and drives a demo alert via postMessage. The demo form sends leads to `/api/public/demo-requests` (honeypot, 5/hour/IP), and they appear in Platform.
 - **SaaS routing**: `deploy/Caddyfile.saas` serves the site on the apex domain, proxies `/api/public`, `/player`, `/shared` and `/files` on the same origin, and serves the app on `app.<domain>`. The default `Caddyfile` stays single-domain for self-hosted customers.
 
+**Phase 1.8 — built (v0.5): ready for paying customers**
+- Email over SMTP (lettre, STARTTLS/TLS). Without it, messages are logged. Used for password reset (1-hour single-use link), team invitations (7-day link where the person chooses their own password), and demo-request alerts to platform admins.
+- Login lockout (5 failures → 15 minutes per account, ×6 per IP), rate limits on sign-up, reset, token checks, screen registration and webhooks; sign-out of other sessions on password change, and of all sessions on reset; `nosniff`, `Referrer-Policy` and `X-Frame-Options: SAMEORIGIN` headers.
+- Test suite: 16 tests, including 12 in-process API tests on fresh databases. GitHub Actions CI runs the tests, JS syntax checks, the site build and compose validation, then builds the Docker image, checks it starts healthy and backs up, and validates both Caddyfiles with the real Caddy.
+
 **Phase 2 — Production hardening (next 4–6 weeks)**
 - Postgres backend + S3/R2 media storage + signed URLs; Redis or Postgres LISTEN/NOTIFY so several server instances share the event bus
 - Per-screen timezone; holiday/exception dates; campaigns (ordered layout sets) and share-of-voice
 - Screenshots from players, uptime history, offline alerts (email/Slack/WhatsApp)
-- Rate limiting, login lockout, 2FA, password reset, invitations by email
+- 2FA (TOTP) for admins; university SSO (see section 5)
 - Server-side thumbnails + video transcoding (ffmpeg) and image resizing per screen resolution
-- Integration tests (API) + Playwright E2E in CI
+- Browser end-to-end tests (Playwright) in CI
 
 **Phase 3 — Players everywhere**
 - **Windows player (Tauri / Rust + WebView2)**, same web player in a ~10 MB native shell:

@@ -75,7 +75,11 @@ struct RegisterReq {
     info: Value,
 }
 
-async fn register(State(state): State<AppState>, body: Option<Json<RegisterReq>>) -> AppResult<Json<Value>> {
+async fn register(State(state): State<AppState>, headers: axum::http::HeaderMap, body: Option<Json<RegisterReq>>) -> AppResult<Json<Value>> {
+    // Enough for a whole building of screens booting at once, not enough to flood the table.
+    if !crate::ratelimit::allow(&format!("register:{}", crate::ratelimit::client_ip(&headers)), 120, crate::ratelimit::HOUR) {
+        return Err(AppError::TooMany("too many screens registering from this network — try again later".into()));
+    }
     let info = body.map(|b| b.0.info).filter(Value::is_object).unwrap_or(json!({}));
     let id = new_id();
     let key = random_token(48);

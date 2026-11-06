@@ -42,11 +42,16 @@ Server commands: `qivo-server healthcheck` · `qivo-server backup [file]` · `qi
 - **Seamless playback**: each item is revealed only once it's decoded or actually playing, so there's no black flash between videos.
 - **AI layout agent** (optional, Anthropic API key): describe a screen in plain words, in French, Arabic or English, and get a real, editable layout with zones, designed slides, a clock, weather and a ticker. Ask for changes in the designer. Results are drafts until a person assigns them. Usage is metered per organization.
 - **Platform admin** for the SaaS owner: create customer organizations, set plans, screen limits and AI allowances, suspend or reactivate customers, and see usage across the platform.
+- **Accounts and security**: invitations by email, password reset, a 15-minute lockout after 5 failed logins, rate limits, single-use expiring links, sign-out everywhere on password change, and security headers.
 - **Proof of play**: the device records every play, even offline, and syncs it later. Reports break plays down by day, content and screen, and export to CSV.
+
+## Tests
+
+`cargo test` runs the unit tests and an in-process API suite. Each test builds the whole app on a fresh database and covers sign-up, lockout, password reset, invitations, sessions, organization isolation, roles, emergency alerts, suspension and website leads. GitHub Actions runs it on every push, then builds the Docker image, checks it starts healthy, and validates both Caddy configs (`.github/workflows/ci.yml`).
 
 ## Website
 
-`site/` holds the public website for qivomedia.com in English, French and Arabic, with full right-to-left layout. The hero shows the real player running live, with a button that triggers a demo fire alert, and there's a demo-request form that feeds leads into the Platform page. Build it with `python3 site/build.py`. See DEPLOY.md, section 9.
+`site/` holds the public website for qivomedia.com in English, French and Arabic, with full right-to-left layout. The hero shows the real player running live, with a button that triggers a demo fire alert, and there's a demo-request form that feeds leads into the Platform page. Build it with `python3 site/build.py`. See DEPLOY.md, section 10.
 
 ## Layout
 

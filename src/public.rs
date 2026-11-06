@@ -2,11 +2,7 @@
 //! demo layout shown in the website's hero. No authentication, so inputs are
 //! validated strictly and rate-limited per IP.
 
-use std::{
-    collections::{BTreeSet, HashMap},
-    sync::{Mutex, OnceLock},
-    time::{Duration, Instant},
-};
+use std::{collections::BTreeSet, time::Duration};
 
 use axum::{
     extract::{Path, State},
@@ -20,6 +16,8 @@ use serde_json::{json, Value};
 use crate::{
     auth::{audit, AuthUser},
     error::{AppError, AppResult},
+    mail,
+    ratelimit::{allow, client_ip},
     state::AppState,
     util::{new_id, now},
 };
@@ -31,38 +29,6 @@ pub fn routes() -> Router<AppState> {
         .route("/platform/leads", get(list_leads))
         .route("/platform/leads/{id}", patch(update_lead))
         .route("/platform/settings/demo-layout", put(set_demo_layout).get(get_demo_layout))
-}
-
-// ------------------------------------------------------------ rate limiting
-
-fn limiter() -> &'static Mutex<HashMap<String, Vec<Instant>>> {
-    static L: OnceLock<Mutex<HashMap<String, Vec<Instant>>>> = OnceLock::new();
-    L.get_or_init(Default::default)
-}
-
-/// At most `max` hits per `window` per key. Old entries are pruned on every call.
-fn allow(key: &str, max: usize, window: Duration) -> bool {
-    let mut m = limiter().lock().unwrap();
-    let now = Instant::now();
-    m.retain(|_, v| {
-        v.retain(|t| now.duration_since(*t) < window);
-        !v.is_empty()
-    });
-    let hits = m.entry(key.to_string()).or_default();
-    if hits.len() >= max {
-        return false;
-    }
-    hits.push(now);
-    true
-}
-
-fn client_ip(h: &HeaderMap) -> String {
-    h.get("x-forwarded-for")
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.split(',').next())
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "local".into())
 }
 
 // ------------------------------------------------------------ leads
@@ -108,6 +74,7 @@ async fn create_lead(State(state): State<AppState>, headers: HeaderMap, Json(r):
         .bind(clip(&r.screens, 20)).bind(clip(&r.message, 2000)).bind(&lang).bind(&ip).bind(now())
         .execute(&state.db).await?;
     tracing::info!("new demo request from {email}");
+    notify_lead(&state, &clip(&r.name, 120), &email, &clip(&r.organization, 160), &clip(&r.screens, 20), &clip(&r.message, 2000), &lang).await;
     Ok(Json(json!({ "ok": true })))
 }
 
@@ -213,16 +180,19 @@ async fn demo(State(state): State<AppState>, headers: HeaderMap) -> AppResult<Js
     })))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::allow;
-    use std::time::Duration;
-    #[test]
-    fn rate_limit() {
-        for _ in 0..3 {
-            assert!(allow("t:1", 3, Duration::from_secs(60)));
-        }
-        assert!(!allow("t:1", 3, Duration::from_secs(60)));
-        assert!(allow("t:2", 3, Duration::from_secs(60)));
+/// Email every platform admin (or QIVO_NOTIFY_EMAIL) about a new demo request.
+async fn notify_lead(state: &AppState, name: &str, email: &str, org: &str, screens: &str, message: &str, lang: &str) {
+    let to: Vec<String> = match std::env::var("QIVO_NOTIFY_EMAIL").ok().filter(|v| !v.trim().is_empty()) {
+        Some(list) => list.split(',').map(|s| s.trim().to_string()).filter(|s| s.contains('@')).collect(),
+        None => sqlx::query_scalar("SELECT email FROM users WHERE platform_admin = 1").fetch_all(&state.db).await.unwrap_or_default(),
+    };
+    let subject = format!("New demo request: {name}{}", if org.is_empty() { String::new() } else { format!(" ({org})") });
+    let text = format!("New demo request from the website.\n\nName: {name}\nEmail: {email}\nOrganization: {org}\nScreens: {screens}\nLanguage: {lang}\n\n{message}\n");
+    let html = format!(
+        "<p>A new demo request just arrived from the website.</p><table style=\"font-size:14px;line-height:1.7\"><tr><td style=\"color:#4b5468;padding-right:14px\">Name</td><td><b>{}</b></td></tr><tr><td style=\"color:#4b5468\">Email</td><td><a href=\"mailto:{e}\">{e}</a></td></tr><tr><td style=\"color:#4b5468\">Organization</td><td>{}</td></tr><tr><td style=\"color:#4b5468\">Screens</td><td>{}</td></tr><tr><td style=\"color:#4b5468\">Language</td><td>{}</td></tr></table><p style=\"white-space:pre-wrap;background:#f1f3f8;border-radius:8px;padding:12px\">{}</p><p style=\"font-size:13px;color:#4b5468\">Reply directly to this person, then mark the request in Platform → Website demo requests.</p>",
+        mail::esc(name), mail::esc(org), mail::esc(screens), mail::esc(&lang.to_uppercase()), mail::esc(message), e = mail::esc(email)
+    );
+    for t in to {
+        mail::send_bg(t, subject.clone(), text.clone(), html.clone());
     }
 }
