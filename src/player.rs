@@ -32,6 +32,7 @@ pub fn routes() -> Router<AppState> {
         .route("/player/register", post(register))
         .route("/player/manifest", get(manifest))
         .route("/player/pop", post(proof_of_play))
+        .route("/player/screenshot", post(upload_screenshot).layer(axum::extract::DefaultBodyLimit::max(MAX_SCREENSHOT)))
         .route("/preview/layout/{id}", get(preview_layout))
 }
 
@@ -270,6 +271,31 @@ async fn proof_of_play(State(state): State<AppState>, d: Device, Json(records): 
     }
     tx.commit().await?;
     Ok(Json(json!({ "accepted": records.len() })))
+}
+
+// ---------- screenshots (native players) ----------
+
+const MAX_SCREENSHOT: usize = 6 * 1024 * 1024;
+
+/// Latest screenshot of a screen, sent by the Windows app after a "screenshot" command.
+/// Only the newest one is kept: `data/screenshots/<display id>.jpg`.
+async fn upload_screenshot(State(state): State<AppState>, d: Device, body: axum::body::Bytes) -> AppResult<Json<Value>> {
+    let Some(org) = d.org_id.as_deref() else { return Err(AppError::Forbidden("display not paired".into())) };
+    if !crate::ratelimit::allow(&format!("screenshot:{}", d.id), 60, crate::ratelimit::HOUR) {
+        return Err(AppError::TooMany("too many screenshots from this screen".into()));
+    }
+    if !body.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        return Err(AppError::BadRequest("screenshot must be a JPEG image".into()));
+    }
+    let dir = state.data_dir.join("screenshots");
+    tokio::fs::create_dir_all(&dir).await.map_err(|e| AppError::Other(e.into()))?;
+    let tmp = dir.join(format!("{}.jpg.tmp", d.id));
+    tokio::fs::write(&tmp, &body).await.map_err(|e| AppError::Other(e.into()))?;
+    tokio::fs::rename(&tmp, dir.join(format!("{}.jpg", d.id))).await.map_err(|e| AppError::Other(e.into()))?;
+    let at = now();
+    sqlx::query("UPDATE displays SET screenshot_at = ? WHERE id = ?").bind(&at).bind(&d.id).execute(&state.db).await?;
+    state.publish(Event::to_admins(org, json!({ "type": "display_screenshot", "display_id": d.id, "at": at })));
+    Ok(Json(json!({ "ok": true, "at": at })))
 }
 
 // ---------- push socket ----------

@@ -91,6 +91,7 @@ async fn main() -> anyhow::Result<()> {
 
     std::fs::create_dir_all(data_dir.join("media"))?;
     std::fs::create_dir_all(data_dir.join("tmp"))?;
+    std::fs::create_dir_all(data_dir.join("screenshots"))?;
 
     let db_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| format!("sqlite://{}", data_dir.join("qivo.db").display()));

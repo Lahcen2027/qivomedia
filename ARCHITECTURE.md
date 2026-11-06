@@ -94,6 +94,13 @@ CMS, web player, pairing, layouts/zones, playlists/widgets, scheduling, triggers
 - Manifest bundles cached per organization and computed once (single-flight), emptied on any content change. Refreshes carry `spread_ms` so large fleets don't all download at once.
 - Load generator in `tools/loadtest`, with results in `STRESS-TEST.md`.
 
+**Phase 1.11 — built (v0.8): Windows player, first version** (`players/windows`)
+- Tauri 2 app (Rust + WebView2) that loads the server's web player, so a server update reaches every screen with no reinstall. Setup screen in EN/FR; tries HTTPS then HTTP; machine-wide defaults (`%ProgramData%`) and `--server` for mass deployment.
+- Kiosk: full screen, always on top, hidden cursor, autoplay with sound, keep-awake. Watchdog supervisor restarts the player on crash, freeze (no heartbeat for 2 min) or exit, plus a daily restart, with back-off.
+- Dashboard: live screenshot, device health (CPU, memory, disk, temperature, uptime, resolution, refresh rate, scaling) and remote Restart player / Restart computer / Screen off-on (admin-only, audit-logged).
+- Native functions are callable only from the configured server's origin (Tauri capabilities). Setup functions stay local.
+- `kiosk/setup-kiosk.ps1`: signage account, auto sign-in, Shell Launcher (no desktop), no sleep or lock screen, update restarts outside 06:00–23:00. GitHub Actions builds the NSIS and MSI installers on Windows.
+
 **Phase 2 — Production hardening (next 4–6 weeks)**
 - Postgres backend + S3/R2 media storage + signed URLs; Redis or Postgres LISTEN/NOTIFY so several server instances share the event bus
 - Per-screen timezone; holiday/exception dates; campaigns (ordered layout sets) and share-of-voice
@@ -103,7 +110,7 @@ CMS, web player, pairing, layouts/zones, playlists/widgets, scheduling, triggers
 - Browser end-to-end tests (Playwright) in CI
 
 **Phase 3 — Players everywhere**
-- **Windows player (Tauri / Rust + WebView2)**, same web player in a ~10 MB native shell:
+- **Windows player (Tauri / Rust + WebView2)**, same web player in a ~10 MB native shell. First version built in v0.8 (see above); still to do:
   - Kiosk mode: fullscreen, always on top, hidden cursor/taskbar, auto-start at boot without login
   - Watchdog auto-restart on hang/crash + scheduled daily restart
   - Remote commands: reboot PC, restart player, real screenshot, volume, display on/off schedule (HDMI-CEC via USB adapter, or monitor power saving)

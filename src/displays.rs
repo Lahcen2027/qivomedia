@@ -24,6 +24,7 @@ pub struct Display {
     pub player_info: String,
     pub last_seen: Option<String>,
     pub created_at: String,
+    pub screenshot_at: Option<String>,
 }
 
 pub fn routes() -> Router<AppState> {
@@ -32,6 +33,7 @@ pub fn routes() -> Router<AppState> {
         .route("/displays/claim", post(claim))
         .route("/displays/{id}", patch(update).delete(remove))
         .route("/displays/{id}/command", post(command))
+        .route("/displays/{id}/screenshot", get(screenshot))
         .route("/groups", get(list_groups).post(create_group))
         .route("/groups/{id}", patch(rename_group).delete(delete_group))
 }
@@ -76,7 +78,7 @@ pub async fn validate_target(state: &AppState, org: &str, target_type: &str, tar
 
 async fn list(State(state): State<AppState>, user: AuthUser) -> AppResult<Json<Vec<Value>>> {
     let rows = sqlx::query_as::<_, Display>(
-        "SELECT id, name, status, group_id, default_layout_id, player_info, last_seen, created_at
+        "SELECT id, name, status, group_id, default_layout_id, player_info, last_seen, created_at, screenshot_at
            FROM displays WHERE org_id = ? ORDER BY name",
     )
     .bind(user.org())
@@ -89,6 +91,7 @@ async fn list(State(state): State<AppState>, user: AuthUser) -> AppResult<Json<V
         out.push(json!({
             "id": d.id, "name": d.name, "status": d.status, "group_id": d.group_id,
             "default_layout_id": d.default_layout_id, "last_seen": d.last_seen, "created_at": d.created_at,
+            "screenshot_at": d.screenshot_at,
             "player_info": serde_json::from_str::<Value>(&d.player_info).unwrap_or(json!({})),
             "online": online,
         }));
@@ -207,6 +210,7 @@ async fn remove(State(state): State<AppState>, user: AuthUser, Path(id): Path<St
     if res.rows_affected() == 0 {
         return Err(AppError::NotFound);
     }
+    let _ = tokio::fs::remove_file(state.data_dir.join("screenshots").join(format!("{id}.jpg"))).await;
     audit(&state, user.org(), Some(&user.0.id), "display.deleted", &id).await;
     Ok(Json(json!({ "ok": true })))
 }
@@ -217,9 +221,12 @@ struct CommandReq {
 }
 
 async fn command(State(state): State<AppState>, user: AuthUser, Path(id): Path<String>, Json(req): Json<CommandReq>) -> AppResult<Json<Value>> {
-    user.require_editor()?;
-    if !["reload", "identify", "clear_cache", "refresh"].contains(&req.command.as_str()) {
-        return Err(AppError::BadRequest("unknown command".into()));
+    let cmd = req.command.as_str();
+    match cmd {
+        "reload" | "identify" | "clear_cache" | "refresh" | "screenshot" => user.require_editor()?,
+        // Native players (Windows app): these affect the device itself, so admins only.
+        "reboot" | "restart_app" | "display_off" | "display_on" => user.require_admin()?,
+        _ => return Err(AppError::BadRequest("unknown command".into())),
     }
     let ids = resolve_targets(&state, user.org(), "display", Some(&id)).await?;
     if ids.is_empty() {
@@ -227,7 +234,25 @@ async fn command(State(state): State<AppState>, user: AuthUser, Path(id): Path<S
     }
     let online = is_online(&state, &id).await;
     state.publish(Event::to_displays(user.org(), ids, json!({ "type": "command", "command": req.command })));
+    if matches!(cmd, "reboot" | "restart_app" | "display_off" | "display_on") {
+        audit(&state, user.org(), Some(&user.0.id), &format!("display.{cmd}"), &id).await;
+    }
     Ok(Json(json!({ "ok": true, "delivered": online })))
+}
+
+async fn screenshot(State(state): State<AppState>, user: AuthUser, Path(id): Path<String>) -> AppResult<axum::response::Response> {
+    use axum::response::IntoResponse;
+    let at: Option<Option<String>> = sqlx::query_scalar("SELECT screenshot_at FROM displays WHERE id = ? AND org_id = ?")
+        .bind(&id)
+        .bind(user.org())
+        .fetch_optional(&state.db)
+        .await?;
+    if at.flatten().is_none() {
+        return Err(AppError::NotFound);
+    }
+    // `id` was just matched against the database, so it is safe in a path.
+    let bytes = tokio::fs::read(state.data_dir.join("screenshots").join(format!("{id}.jpg"))).await.map_err(|_| AppError::NotFound)?;
+    Ok(([(axum::http::header::CONTENT_TYPE, "image/jpeg"), (axum::http::header::CACHE_CONTROL, "no-store")], bytes).into_response())
 }
 
 // ---------- groups ----------

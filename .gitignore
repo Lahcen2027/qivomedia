@@ -2,3 +2,5 @@
 /data
 /deploy/.env
 tools/loadtest/target/
+players/windows/src-tauri/target/
+players/windows/src-tauri/gen/

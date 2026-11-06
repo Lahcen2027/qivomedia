@@ -22,6 +22,9 @@ const el = (tag, cls, html) => { const e = document.createElement(tag); if (cls)
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const deviceKey = () => localStorage.getItem(LS.key);
+// Inside the Qivomedia Windows app: native functions (screenshot, reboot, device health…).
+// The app only lets pages from its configured server call these.
+const NATIVE = window.__TAURI_INTERNALS__ && !PREVIEW && !DEMO ? (cmd, args) => window.__TAURI_INTERNALS__.invoke(cmd, args) : null;
 
 async function api(path, opts = {}) {
   const headers = { "Content-Type": "application/json", ...(opts.headers || {}) };
@@ -438,7 +441,7 @@ function connect() {
   if (PREVIEW || !deviceKey()) return;
   const proto = location.protocol === "https:" ? "wss" : "ws";
   ws = new WebSocket(`${proto}://${location.host}/ws/player?key=${encodeURIComponent(deviceKey())}`);
-  ws.onopen = () => { wsBackoff = 1000; loadManifest(); flushPop(); };
+  ws.onopen = () => { wsBackoff = 1000; loadManifest(); flushPop(); setTimeout(reportStatus, 3000); };
   ws.onmessage = (ev) => {
     let msg; try { msg = JSON.parse(ev.data); } catch { return; }
     switch (msg.type) {
@@ -467,6 +470,15 @@ function startInterrupt(msg) {
 }
 
 async function runCommand(cmd) {
+  if (NATIVE) {
+    try {
+      if (cmd === "screenshot") return await uploadScreenshot();
+      if (cmd === "reboot") { overlay("Restarting this computer…", 10000); return await NATIVE("reboot"); }
+      if (cmd === "restart_app") return await NATIVE("restart_player");
+      if (cmd === "display_off") return await NATIVE("display_power", { on: false });
+      if (cmd === "display_on") return await NATIVE("display_power", { on: true });
+    } catch (e) { console.warn("native command failed", cmd, e); }
+  }
   if (cmd === "reload") location.reload();
   if (cmd === "refresh") loadManifest();
   if (cmd === "identify") overlay(`<b>${esc(manifest?.display?.name || "Unpaired screen")}</b>${screen.width}×${screen.height} · v${esc(manifest?.version || "-")} · ${navigator.onLine ? "online" : "offline"}`, 10000);
@@ -476,7 +488,15 @@ async function runCommand(cmd) {
   }
 }
 
-function reportStatus() {
+async function uploadScreenshot() {
+  const b64 = await NATIVE("screenshot");
+  const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  await fetch("/api/player/screenshot", { method: "POST", headers: { "X-Device-Key": deviceKey(), "Content-Type": "image/jpeg" }, body: bytes });
+}
+
+async function reportStatus() {
+  if (!ws || ws.readyState !== 1) return;
+  const native = NATIVE ? await NATIVE("device_info").catch(() => null) : null;
   if (!ws || ws.readyState !== 1) return;
   ws.send(JSON.stringify({
     type: "status",
@@ -485,7 +505,8 @@ function reportStatus() {
     info: {
       user_agent: navigator.userAgent, screen: `${screen.width}x${screen.height}`, viewport: `${innerWidth}x${innerHeight}`,
       uptime_s: Math.round((Date.now() - startedAt) / 1000), pop_queue: JSON.parse(localStorage.getItem(LS.pop) || "[]").length,
-      language: navigator.language, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, player: "web/0.1",
+      language: navigator.language, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+      player: native ? `windows/${native.app_version}` : "web/0.1", native,
     },
   }));
 }
@@ -511,6 +532,12 @@ async function boot() {
     return;
   }
   if ("serviceWorker" in navigator) navigator.serviceWorker.register("/player/sw.js", { scope: "/player/" }).catch(() => {});
+  if (NATIVE) {
+    // The app's watchdog restarts the player if these stop (frozen page).
+    NATIVE("heartbeat"); setInterval(() => NATIVE("heartbeat"), 15000);
+    addEventListener("contextmenu", (e) => e.preventDefault());
+    addEventListener("keydown", (e) => { if (e.ctrlKey && e.shiftKey && e.key === "F10") NATIVE("open_setup"); });
+  }
   if (!deviceKey()) {
     sysScreen(`<p>Registering screen…</p>`);
     for (;;) {

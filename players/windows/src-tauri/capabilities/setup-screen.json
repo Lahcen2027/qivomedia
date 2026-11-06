@@ -1,0 +1,14 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "setup-screen",
+  "description": "The bundled setup / connecting screen (local pages only).",
+  "windows": ["main"],
+  "permissions": [
+    "allow-get-config",
+    "allow-save-config",
+    "allow-test-server",
+    "allow-quit-player",
+    "allow-device-info",
+    "allow-heartbeat"
+  ]
+}

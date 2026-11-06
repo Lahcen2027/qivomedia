@@ -27,7 +27,7 @@ base-uri 'none'; form-action 'self'; frame-ancestors 'self'";
 // to the player's storage or cookies).
 const CSP_PLAYER: &str = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https:; \
 img-src 'self' data: blob: https:; media-src 'self' blob: https:; font-src 'self' data: https:; \
-connect-src 'self' https://api.open-meteo.com; frame-src 'self' https: http:; worker-src 'self'; object-src 'none'; \
+connect-src 'self' https://api.open-meteo.com ipc: http://ipc.localhost; frame-src 'self' https: http:; worker-src 'self'; object-src 'none'; \
 base-uri 'none'; form-action 'none'; frame-ancestors 'self'";
 
 // Uploaded HTML/SVG/XML: never able to run as our origin.

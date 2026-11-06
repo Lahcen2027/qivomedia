@@ -560,3 +560,45 @@ async fn cached_manifest_shows_edits_immediately() {
     assert_eq!(text(&m3).as_deref(), Some("after"));
     assert_ne!(m1["version"], m3["version"]);
 }
+
+#[tokio::test]
+async fn native_player_screenshot_and_device_commands() {
+    let t = setup("10.0.0.41").await;
+    let (owner, _) = t.signup("native@test.ma").await;
+    let (_, reg) = t.req("POST", "/api/player/register", None, Some(json!({}))).await;
+    let key = reg["device_key"].as_str().unwrap().to_string();
+    let code = reg["pairing_code"].as_str().unwrap();
+    t.req("POST", "/api/displays/claim", Some(&owner), Some(json!({ "code": code, "name": "Lobby PC" }))).await;
+    let did = t.req("GET", "/api/displays", Some(&owner), None).await.1[0]["id"].as_str().unwrap().to_string();
+
+    // No screenshot yet.
+    assert_eq!(t.req("GET", &format!("/api/displays/{did}/screenshot"), Some(&owner), None).await.0, StatusCode::NOT_FOUND);
+    // The screen uploads one (JPEG only).
+    let upload = |body: Vec<u8>| {
+        let key = key.clone();
+        let app = t.app.clone();
+        async move {
+            use tower::ServiceExt;
+            app.oneshot(Request::builder().method("POST").uri("/api/player/screenshot").header("host", "qivo.test")
+                .header("x-device-key", key).header("content-type", "image/jpeg").body(Body::from(body)).unwrap()).await.unwrap().status()
+        }
+    };
+    assert_eq!(upload(b"<svg onload=alert(1)>".to_vec()).await, StatusCode::BAD_REQUEST);
+    let jpeg = vec![0xFF, 0xD8, 0xFF, 0xE0, 0, 0x10, b'J', b'F', b'I', b'F', 0, 0xFF, 0xD9];
+    assert_eq!(upload(jpeg.clone()).await, StatusCode::OK);
+    let list = t.req("GET", "/api/displays", Some(&owner), None).await.1;
+    assert!(list[0]["screenshot_at"].is_string());
+
+    // Device commands: editors may take screenshots, only admins may restart the computer.
+    let (s, _) = t.req("POST", "/api/users", Some(&owner), Some(json!({ "email": "ed@test.ma", "name": "Editor Person", "role": "editor", "password": "violet-canyon-42" }))).await;
+    assert_eq!(s, StatusCode::OK);
+    let editor = t.login_token("ed@test.ma", "violet-canyon-42").await;
+    assert_eq!(t.req("POST", &format!("/api/displays/{did}/command"), Some(&editor), Some(json!({ "command": "screenshot" }))).await.0, StatusCode::OK);
+    assert_eq!(t.req("POST", &format!("/api/displays/{did}/command"), Some(&editor), Some(json!({ "command": "reboot" }))).await.0, StatusCode::FORBIDDEN);
+    assert_eq!(t.req("POST", &format!("/api/displays/{did}/command"), Some(&owner), Some(json!({ "command": "reboot" }))).await.0, StatusCode::OK);
+    assert_eq!(t.req("POST", &format!("/api/displays/{did}/command"), Some(&owner), Some(json!({ "command": "format_c" }))).await.0, StatusCode::BAD_REQUEST);
+    let audit = t.req("GET", "/api/audit", Some(&owner), None).await.1;
+    assert!(audit.to_string().contains("display.reboot"));
+    // Another organization's screenshot is not reachable.
+    assert_eq!(t.req("GET", "/api/displays/not-mine/screenshot", Some(&owner), None).await.0, StatusCode::NOT_FOUND);
+}

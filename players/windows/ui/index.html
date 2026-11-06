@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Qivomedia Player — setup</title>
+<link rel="stylesheet" href="setup.css">
+</head>
+<body>
+<main class="wrap">
+  <div class="brand"><i class="logo"></i>Qivomedia <span class="tag">Player</span></div>
+
+  <section id="connecting" hidden>
+    <h1 data-t="connecting_title">Connecting…</h1>
+    <p class="muted"><span data-t="connecting_to">Waiting for</span> <b id="cserver"></b></p>
+    <div class="spinner"></div>
+    <p class="small muted" id="cstatus"></p>
+    <button class="btn" id="change" data-t="change_server">Change server</button>
+  </section>
+
+  <section id="setup" hidden>
+    <h1 data-t="setup_title">Set up this screen</h1>
+    <p class="muted" data-t="setup_lead">Enter the address of your Qivomedia server. The screen will then show a pairing code to type in the dashboard.</p>
+    <form id="form" autocomplete="off">
+      <label for="server" data-t="server">Server address</label>
+      <div class="row">
+        <input id="server" name="server" placeholder="https://signage.your-university.ma" required spellcheck="false" autofocus>
+        <button type="button" class="btn" id="test" data-t="test">Test</button>
+      </div>
+      <p class="small" id="result" role="status"></p>
+      <div class="grid">
+        <div>
+          <label for="restart" data-t="restart">Daily restart</label>
+          <input id="restart" name="restart" type="time" value="04:00">
+          <p class="small muted" data-t="restart_help">Keeps the screen fresh. Leave empty for never.</p>
+        </div>
+        <div>
+          <label class="chk"><input type="checkbox" id="autostart" checked> <span data-t="autostart">Start when Windows starts</span></label>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn primary" type="submit" data-t="save">Save and start</button>
+      </div>
+    </form>
+  </section>
+
+  <footer>
+    <div class="small muted" id="device"></div>
+    <div class="small muted"><span data-t="keys">Ctrl+Shift+F10 opens this screen from the player.</span>
+      <button class="link" id="quit" data-t="quit">Exit player</button></div>
+  </footer>
+</main>
+<script src="setup.js"></script>
+</body>
+</html>
