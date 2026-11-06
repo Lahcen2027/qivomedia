@@ -12,6 +12,8 @@ const startedAt = Date.now();
 let manifest = null;
 let current = { key: "", layouts: [], idx: 0, stage: null, until: 0 };
 let interrupt = null; // { stage, until, layout_id }
+const alerts = new Map(); // id -> active emergency alert (highest precedence of all)
+let alertShown = null;    // id of the alert currently on screen
 let ws = null;
 let wsBackoff = 1000;
 
@@ -103,14 +105,18 @@ function renderItem(item, ctx) {
     if (m.kind === "image") {
       const img = el("img", `fit-${item.fit || "contain"}`);
       img.src = m.url; img.alt = "";
-      return { node: img };
+      // Revealed only once decoded, so it never paints half-loaded.
+      const ready = img.decode ? img.decode().catch(() => {}) : new Promise((res) => { img.onload = img.onerror = res; });
+      return { node: img, ready };
     }
     if (m.kind === "video") {
       const v = el("video", `fit-${item.fit || "contain"}`);
       v.src = m.url; v.muted = item.mute !== false; v.playsInline = true; v.autoplay = true; v.preload = "auto";
       const ended = new Promise((res) => { v.onended = res; v.onerror = res; });
+      // Revealed only once frames are actually playing: no black flash between items.
+      const ready = new Promise((res) => { v.addEventListener("playing", res, { once: true }); v.addEventListener("error", res, { once: true }); });
       v.play().catch(() => { v.muted = true; v.play().catch(() => {}); });
-      return { node: v, ended: item.play_full !== false ? ended : null };
+      return { node: v, ended: item.play_full !== false ? ended : null, ready };
     }
     if (m.kind === "pdf" || m.kind === "html") {
       const f = el("iframe"); f.src = m.url; return { node: f };
@@ -260,7 +266,8 @@ class RegionPlayer {
     const item = list[this.idx];
     const r = renderItem(item, { data: this.data });
     if (!r) { this.timer = setTimeout(() => this.next(), 500); return; }
-    this.swap(r);
+    await this.swap(r);
+    if (!this.alive) return;
     this.playing = Object.assign({}, item, { _start: new Date().toISOString(), _startMs: Date.now() });
     const durMs = item.duration * 1000;
     if (r.ended) {
@@ -280,14 +287,24 @@ class RegionPlayer {
     this.playing = Object.assign({}, item, { _start: new Date().toISOString(), _startMs: Date.now() });
     this.timer = setTimeout(() => this.relog(item), item.duration * 1000);
   }
-  swap(r) {
+  /**
+   * Double-buffered swap: the new item is mounted invisibly, and only revealed
+   * (with its transition) once it is ready to paint — decoded image, playing video.
+   * The previous item stays on screen meanwhile, so there is never a blank frame.
+   */
+  async swap(r) {
     const tr = this.region.transition || "fade";
     const old = this.currentSlot;
     if (!r) { if (old) { old.cleanup(); old.el.remove(); } this.currentSlot = null; return; }
-    const slot = el("div", `slot ${tr !== "none" ? "tr-" + tr : ""}`);
+    const slot = el("div", "slot");
+    slot.style.opacity = "0";
     slot.appendChild(r.node);
     this.node.appendChild(slot);
     const cleanup = () => { if (r.timer) clearInterval(r.timer); const v = slot.querySelector("video,audio"); if (v) { v.pause(); v.removeAttribute("src"); v.load(); } };
+    if (r.ready) await Promise.race([r.ready, sleep(2500)]); // never wait forever on a broken file
+    if (!this.alive) { cleanup(); slot.remove(); return; }
+    slot.style.opacity = "";
+    if (tr !== "none") slot.classList.add("tr-" + tr);
     this.currentSlot = { el: slot, cleanup };
     if (old) {
       if (tr === "none") { old.cleanup(); old.el.remove(); }
@@ -351,6 +368,12 @@ function showLayout(id) {
 /** Main loop: evaluate schedule, rotate equal-priority layouts, handle interrupts. */
 function tick() {
   if (!manifest || manifest.status !== "active") return;
+  if (renderAlert()) {
+    // An alert owns the screen: stop content underneath (no audio, no proof-of-play).
+    if (current.stage) { destroyStage(current.stage); current.stage = null; current.key = ""; }
+    if (interrupt) { destroyStage(interrupt.stage); interrupt = null; }
+    return;
+  }
   if (interrupt && Date.now() >= interrupt.until) {
     destroyStage(interrupt.stage); interrupt = null; reportStatus();
   }
@@ -374,6 +397,10 @@ function tick() {
 function applyManifest(m, force = false) {
   const changed = !manifest || manifest.version !== m.version;
   manifest = m;
+  // The manifest is the source of truth for alerts (covers reboots and missed messages).
+  const ids = new Set((m.alerts || []).map((a) => a.id));
+  for (const a of m.alerts || []) alerts.set(a.id, a);
+  for (const id of [...alerts.keys()]) if (!ids.has(id)) { alerts.delete(id); if (alertShown === id) allClear(); }
   if (!PREVIEW) localStorage.setItem(LS.manifest, JSON.stringify(m));
   if (changed || force) {
     current.key = ""; // force rebuild with the new content
@@ -412,6 +439,8 @@ function connect() {
       case "refresh": loadManifest(); break;
       case "unpaired": localStorage.clear(); location.reload(); break;
       case "interrupt": startInterrupt(msg); break;
+      case "alert": alerts.set(msg.alert.id, msg.alert); tick(); break;
+      case "alert_cleared": if (alerts.delete(msg.id) && alertShown === msg.id) allClear(); tick(); break;
       case "command": runCommand(msg.command); break;
     }
   };
@@ -420,6 +449,7 @@ function connect() {
 }
 
 function startInterrupt(msg) {
+  if (alerts.size) return; // never cover an emergency alert
   const layout = manifest?.layouts?.[msg.layout_id];
   if (!layout) { loadManifest(); return; }
   if (interrupt) destroyStage(interrupt.stage);
@@ -485,4 +515,67 @@ async function boot() {
   document.addEventListener("dblclick", () => document.documentElement.requestFullscreen?.().catch(() => {}));
 }
 
+
+
+// ---------------- emergency alerts ----------------
+const RANK = { fire: 5, evacuation: 5, lockdown: 4, weather: 3, custom: 2 };
+const ICON_ALERT = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.9L1.8 18a2 2 0 001.7 3h17a2 2 0 001.7-3L13.7 3.9a2 2 0 00-3.4 0z"/><path d="M12 9v4M12 17h.01"/></svg>';
+const ICON_OK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M8 12l3 3 5-6"/></svg>';
+
+function topAlert() {
+  let best = null;
+  for (const a of alerts.values()) {
+    if (!best || (RANK[a.kind] || 1) > (RANK[best.kind] || 1) || ((RANK[a.kind] || 1) === (RANK[best.kind] || 1) && a.started_at > best.started_at)) best = a;
+  }
+  return best;
+}
+
+/** Shows the most important active alert. Returns true while an alert owns the screen. */
+function renderAlert() {
+  const a = topAlert();
+  if (!a) return false;
+  if (alertShown === a.id) return true;
+  document.querySelectorAll(".alert").forEach((n) => n.remove());
+  sysScreen(null);
+  const lines = a.lines || [];
+  const o = el("div", `alert ${a.color || "red"} ${lines.length === 1 ? "single" : ""}`);
+  o.setAttribute("role", "alert");
+  o.innerHTML = `${a.test ? `<div class="test">TEST · EXERCICE · تمرين</div>` : ""}
+    <div class="head">${ICON_ALERT}<div>${lines.slice(0, 1).map((l) => `<div class="t" ${l.lang === "ar" ? 'dir="rtl" lang="ar"' : ""}>${esc(l.title)}</div>`).join("")}</div></div>
+    ${lines.map((l, i) => `<div class="ln" ${l.lang === "ar" ? 'dir="rtl" lang="ar"' : ""}>${i ? `<div class="t">${esc(l.title)}</div>` : ""}<div class="m">${esc(l.message)}</div></div>`).join("")}
+    <div class="when">${new Date(a.started_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>`;
+  document.body.appendChild(o);
+  alertShown = a.id;
+  if (a.sound && !a.test) siren();
+  return true;
+}
+
+function allClear() {
+  alertShown = null;
+  document.querySelectorAll(".alert").forEach((n) => n.remove());
+  if (alerts.size) return; // another alert is still active; tick() shows it
+  const o = el("div", "alert clear");
+  o.innerHTML = `<div class="head">${ICON_OK}<div class="t">Fin d'alerte</div></div>
+    <div class="ln" dir="rtl" lang="ar"><div class="t">انتهى الإنذار</div></div>
+    <div class="ln"><div class="t">All clear</div></div>`;
+  document.body.appendChild(o);
+  setTimeout(() => { if (!alertShown) o.remove(); }, 15000);
+}
+
+function siren() {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator(), gain = ctx.createGain();
+    osc.type = "square"; gain.gain.value = 0.08;
+    osc.connect(gain).connect(ctx.destination);
+    const t0 = ctx.currentTime;
+    for (let i = 0; i < 6; i++) {
+      osc.frequency.setValueAtTime(880, t0 + i * 0.5);
+      osc.frequency.setValueAtTime(660, t0 + i * 0.5 + 0.25);
+    }
+    osc.start(t0); osc.stop(t0 + 3);
+  } catch { /* audio may be blocked until the screen has been interacted with */ }
+}
+
+// Start last, so every declaration above is initialized before the first render.
 boot();

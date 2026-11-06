@@ -9,6 +9,7 @@ import * as triggers from "./pages/triggers.js";
 import * as reports from "./pages/reports.js";
 import * as team from "./pages/team.js";
 import * as platform from "./pages/platform.js";
+import * as alerts from "./pages/alerts.js";
 
 const app = document.getElementById("app");
 
@@ -25,11 +26,13 @@ const ROUTES = [
   [/^\/reports$/, reports],
   [/^\/team$/, team],
   [/^\/platform$/, platform],
+  [/^\/alerts$/, alerts],
 ];
 
 const NAV = [
   ["", "Overview", ICON.home, "/"],
   ["sec", "Screens"],
+  ["", "Emergency alerts", ICON.siren, "/alerts"],
   ["", "Displays", ICON.display, "/displays"],
   ["", "Schedule", ICON.calendar, "/schedules"],
   ["", "Triggers", ICON.bolt, "/triggers"],
@@ -89,7 +92,7 @@ function shell() {
         <a href="#" id="logout" class="small">Sign out</a>
       </div>
     </aside>
-    <main class="main"><div class="page" id="page"></div></main>
+    <main class="main"><div id="alertbar" hidden></div><div class="page" id="page"></div></main>
   </div>`);
   app.appendChild(s);
   s.querySelector("#logout").onclick = (e) => { e.preventDefault(); logout(); };
@@ -131,6 +134,7 @@ function live() {
     const msg = JSON.parse(e.data);
     window.dispatchEvent(new CustomEvent("qivo:live", { detail: msg }));
     if (msg.type === "trigger_fired") toast(`Trigger fired on ${msg.displays} screen(s)`);
+    if (msg.type === "alert_started" || msg.type === "alert_cleared") alerts.refreshAlertBar();
   };
   liveWs.onclose = () => setTimeout(() => store.token && live(), 3000);
 }
@@ -146,6 +150,7 @@ async function start() {
   shell();
   live();
   route();
+  alerts.refreshAlertBar();
 }
 
 window.addEventListener("hashchange", () => (store.me ? route() : authScreen()));

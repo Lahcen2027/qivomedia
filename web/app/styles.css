@@ -183,3 +183,11 @@ tr:hover td { background: rgba(255,255,255,.015); }
 .ai-progress[hidden] { display: none; }
 .spin { width: 14px; height: 14px; border: 2px solid rgba(255,255,255,.25); border-top-color: #fff; border-radius: 50%; display: inline-block; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* emergency alerts */
+.alert-kind { border: 0; border-radius: var(--r); padding: 20px 18px; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; cursor: pointer; font: inherit; text-align: left; min-height: 132px; transition: transform .1s, filter .1s; }
+.alert-kind:hover { filter: brightness(1.08); transform: translateY(-1px); }
+.alert-kind b { font-size: 18px; } .alert-kind span { opacity: .9; font-size: 13px; }
+.alertbar { display: flex; align-items: center; gap: 12px; padding: 10px 32px; position: sticky; top: 0; z-index: 50; }
+.alertbar svg { width: 20px; height: 20px; flex: none; }
+#alertbar[hidden] { display: none; }

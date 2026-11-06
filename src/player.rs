@@ -180,8 +180,10 @@ pub async fn build_manifest(state: &AppState, d: &Device) -> AppResult<Value> {
     ids.extend(d.default_layout_id.clone());
     let (layouts, playlists, media) = bundle(state, org, &ids).await?;
 
+    let alerts = crate::alerts::active_for_display(state, org, &d.id, d.group_id.as_deref()).await?;
     let body = json!({
         "display": { "id": d.id, "name": d.name },
+        "alerts": alerts,
         "default_layout_id": d.default_layout_id,
         "schedules": schedules,
         "layouts": layouts,

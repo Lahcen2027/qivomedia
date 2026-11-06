@@ -5,6 +5,7 @@
 //! the web player and content-addressed media files.
 
 mod ai;
+mod alerts;
 mod auth;
 mod displays;
 mod error;
@@ -102,6 +103,7 @@ async fn main() -> anyhow::Result<()> {
         .merge(player::routes())
         .merge(platform::routes())
         .merge(ai::routes())
+        .merge(alerts::routes())
         .route("/health", get(|| async { "ok" }));
 
     let files = Router::new()

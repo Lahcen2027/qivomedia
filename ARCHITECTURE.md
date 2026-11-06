@@ -61,6 +61,10 @@ CMS, web player, pairing, layouts/zones, playlists/widgets, scheduling, triggers
 - **Platform admin** (SaaS owner): customer organizations with plan, screen limit, AI on/off + monthly allowance, suspend/reactivate (users blocked, screens disabled, nothing deleted), delete; platform-wide stats and AI activity log; `qivo-server make-admin <email>`
 - **AI layout agent**: brief → complete editable layout (zones, playlists, HTML slides, native clock/weather/ticker/countdown widgets, library media) via Claude with a forced `build_signage` tool; "Ask AI to change" revisions in the designer; drafts only (never auto-scheduled); output validated with the same rules as the editor (invented media ids dropped); per-org monthly metering and token accounting. Config: `ANTHROPIC_API_KEY`, `QIVO_AI_MODEL` (default `claude-sonnet-5-5`).
 
+**Phase 1.6 — built (v0.3)**
+- **Emergency alerts**: templates in FR/AR/EN (fire, evacuation, lockdown, severe weather) plus custom alerts in red/amber/blue; targets all/group/screen; above all schedules and triggers; included in the manifest, so they survive reboots and offline periods; siren; "All clear" on clear; test/drill mode; JSON webhook + **CAP 1.2** (Alert/Update start, Cancel clears matching `references`); audit-logged; active-alert banner across the dashboard. Editors can raise alerts.
+- **Seamless playback**: double-buffered swap reveals the next item only when it is ready (decoded image / playing video, 2.5 s cap), so there is no black frame between items.
+
 **Phase 2 — Production hardening (next 4–6 weeks)**
 - Postgres backend + S3/R2 media storage + signed URLs; Redis or Postgres LISTEN/NOTIFY so several server instances share the event bus
 - Per-screen timezone; holiday/exception dates; campaigns (ordered layout sets) and share-of-voice
@@ -96,7 +100,7 @@ Campuses run hundreds of screens across faculties, libraries, cafeterias and res
 
 **Priority 1 — needed to win the deal**
 1. **University login (SSO):** SAML 2.0 / OpenID Connect with Microsoft 365 (Azure AD / Entra ID) and Google Workspace; auto-create users on first login; map IdP groups to roles. Often a hard requirement from university IT.
-2. **Emergency alerts:** one-click campus-wide or building-level takeover within seconds (fire, lockdown, weather), highest priority above all schedules, stays until cleared. Accept the standard alert format **CAP (Common Alerting Protocol)** so campus emergency systems can trigger it directly. Builds on existing webhook triggers. Audit-logged; tested periodically.
+2. **Emergency alerts (built in v0.3):** one-click campus-wide or building-level takeover within seconds (fire, lockdown, weather), highest priority above all schedules, stays until cleared. Accept the standard alert format **CAP (Common Alerting Protocol)** so campus emergency systems can trigger it directly. Builds on existing webhook triggers. Audit-logged; tested periodically.
 3. **Approval workflow:** departments, clubs and students submit content; communications approves before it goes live. Draft → pending → approved/rejected, with comments and email notification. Same mechanism as the AI drafts-first feature.
 
 **Priority 2 — strong differentiators**

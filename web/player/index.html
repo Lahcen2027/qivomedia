@@ -55,6 +55,23 @@
   .overlay b { display: block; font-size: 4vmin; }
   .progress { width: 40vmin; height: .8vmin; border-radius: 1vmin; background: rgba(255,255,255,.1); overflow: hidden; }
   .progress > div { height: 100%; width: 0; background: linear-gradient(90deg, #6ee7ff, #7c5cff); transition: width .3s; }
+  /* emergency alerts */
+  .alert { position: fixed; inset: 0; z-index: 100; display: flex; flex-direction: column; justify-content: center; gap: 4vmin; padding: 6vmin 7vmin; cursor: none; }
+  .alert.red { background: #b91c1c; color: #fff; } .alert.amber { background: #f59e0b; color: #1c1206; } .alert.blue { background: #1d4ed8; color: #fff; }
+  .alert.clear { background: #047857; color: #fff; }
+  .alert::before { content: ""; position: absolute; inset: 1.6vmin; border: 1.2vmin solid currentColor; border-radius: 2vmin; opacity: .9; animation: alertPulse 1.2s ease-in-out infinite; pointer-events: none; }
+  .alert.clear::before { animation: none; opacity: .5; }
+  @keyframes alertPulse { 0%,100% { opacity: .95 } 50% { opacity: .15 } }
+  .alert .head { display: flex; align-items: center; gap: 3vmin; }
+  .alert .head svg { width: 12vmin; height: 12vmin; flex: none; }
+  .alert .ln { border-top: .4vmin solid currentColor; padding-top: 2.4vmin; opacity: .98; }
+  .alert .ln:first-of-type { border-top: 0; padding-top: 0; }
+  .alert .t { font-weight: 800; font-size: 6.4vmin; line-height: 1.1; letter-spacing: -.01em; }
+  .alert .m { font-size: 3.6vmin; line-height: 1.35; margin-top: 1vmin; font-weight: 500; }
+  .alert.single .t { font-size: 11vmin; } .alert.single .m { font-size: 5.4vmin; }
+  .alert [dir=rtl] { text-align: right; font-family: "Noto Kufi Arabic", "Segoe UI", Tahoma, sans-serif; }
+  .alert .test { position: absolute; top: 4vmin; left: 50%; transform: translateX(-50%); background: #fff; color: #111; font-weight: 800; font-size: 3vmin; padding: 1vmin 3vmin; border-radius: 99px; letter-spacing: .08em; }
+  .alert .when { position: absolute; bottom: 4vmin; right: 5vmin; font-size: 2.4vmin; opacity: .85; }
   .preview-badge { position: fixed; top: 12px; right: 12px; z-index: 70; background: #7c5cff; color: #fff; font: 600 12px system-ui; padding: 6px 10px; border-radius: 99px; cursor: default; }
 </style>
 </head>
