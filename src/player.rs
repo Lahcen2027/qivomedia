@@ -109,6 +109,11 @@ async fn register(State(state): State<AppState>, headers: axum::http::HeaderMap,
 
 /// Gather layouts → playlists → media into one self-contained bundle.
 pub(crate) async fn bundle(state: &AppState, org: &str, layout_ids: &BTreeSet<String>) -> AppResult<(Value, Value, Value)> {
+    let b = state.bundle(org, layout_ids, || load_bundle(state, org, layout_ids)).await?;
+    Ok((*b).clone())
+}
+
+async fn load_bundle(state: &AppState, org: &str, layout_ids: &BTreeSet<String>) -> AppResult<(Value, Value, Value)> {
     let mut layouts = BTreeMap::new();
     let mut playlist_ids = BTreeSet::new();
     for lid in layout_ids {
@@ -203,7 +208,7 @@ pub async fn build_manifest(state: &AppState, d: &Device) -> AppResult<Value> {
 }
 
 async fn manifest(State(state): State<AppState>, d: Device) -> AppResult<Json<Value>> {
-    sqlx::query("UPDATE displays SET last_seen = ? WHERE id = ?").bind(now()).bind(&d.id).execute(&state.db).await?;
+    state.touch(&d.id, None);
     let suspended: bool = match &d.org_id {
         Some(o) => sqlx::query_scalar("SELECT suspended FROM organizations WHERE id = ?").bind(o).fetch_one(&state.db).await?,
         None => false,
@@ -270,7 +275,11 @@ async fn proof_of_play(State(state): State<AppState>, d: Device, Json(records): 
 // ---------- push socket ----------
 
 pub async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>, d: Device) -> Response {
-    ws.on_upgrade(move |socket| player_socket(socket, state, d))
+    // Small buffers: the default 128 KB read buffer per socket is ~1.3 GB for 10,000 screens.
+    ws.max_message_size(64 * 1024)
+        .read_buffer_size(4096)
+        .write_buffer_size(0)
+        .on_upgrade(move |socket| player_socket(socket, state, d))
 }
 
 async fn set_presence(state: &AppState, d: &Device, delta: i64) {
@@ -281,27 +290,28 @@ async fn set_presence(state: &AppState, d: &Device, delta: i64) {
         *n > 0
     };
     if let Some(org) = &d.org_id {
-        let _ = sqlx::query("UPDATE displays SET last_seen = ? WHERE id = ?").bind(now()).bind(&d.id).execute(&state.db).await;
+        state.touch(&d.id, None);
         state.publish(Event::to_admins(org, json!({ "type": "display_presence", "display_id": d.id, "online": online, "at": now() })));
     }
 }
 
 async fn player_socket(mut socket: WebSocket, state: AppState, d: Device) {
     let org = d.org_id.clone().unwrap_or_default();
-    let mut rx = state.bus.subscribe();
+    let mut rx = state.hub.subscribe_player(&org);
     set_presence(&state, &d, 1).await;
     let _ = socket.send(Message::Text(json!({ "type": "hello", "status": d.status }).to_string().into())).await;
     let mut ping = tokio::time::interval(std::time::Duration::from_secs(25));
     loop {
         tokio::select! {
             ev = rx.recv() => match ev {
-                Ok(ev) if ev.is_for_player(&org, &d.id) => {
-                    if socket.send(Message::Text(ev.payload.to_string().into())).await.is_err() { break; }
+                Ok(p) if p.is_for(&d.id) => {
+                    if socket.send(Message::Text(p.text.clone())).await.is_err() { break; }
                 }
                 Ok(_) => {}
                 Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
-                    // We may have missed something: make the player re-sync.
-                    let _ = socket.send(Message::Text(json!({ "type": "refresh" }).to_string().into())).await;
+                    // We may have missed something: make the player re-sync (spread out, like any refresh).
+                    let spread = (state.hub.player_sockets(&org) / 2).min(10_000);
+                    let _ = socket.send(Message::Text(json!({ "type": "refresh", "spread_ms": spread }).to_string().into())).await;
                 }
                 Err(_) => break,
             },
@@ -313,10 +323,7 @@ async fn player_socket(mut socket: WebSocket, state: AppState, d: Device) {
                     // Player status report: { type: "status", layout_id, version, info }
                     if let (Ok(v), Some(o)) = (serde_json::from_str::<Value>(&t), &d.org_id) {
                         if v["type"] == "status" {
-                            if v["info"].is_object() {
-                                let _ = sqlx::query("UPDATE displays SET player_info = ?, last_seen = ? WHERE id = ?")
-                                    .bind(v["info"].to_string()).bind(now()).bind(&d.id).execute(&state.db).await;
-                            }
+                            state.touch(&d.id, v["info"].is_object().then(|| v["info"].to_string()));
                             state.publish(Event::to_admins(o, json!({
                                 "type": "display_status", "display_id": d.id,
                                 "layout_id": v["layout_id"], "version": v["version"], "at": now(),

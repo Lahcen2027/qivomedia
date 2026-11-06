@@ -1,0 +1,16 @@
+[package]
+name = "qivo-load"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# Stand-alone load generator: not part of the server build.
+[workspace]
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+tokio-tungstenite = "0.26"
+futures-util = "0.3"
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+serde_json = "1"
+anyhow = "1"

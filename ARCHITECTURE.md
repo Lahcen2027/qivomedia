@@ -88,6 +88,12 @@ CMS, web player, pairing, layouts/zones, playlists/widgets, scheduling, triggers
 - **Security audit events** with IP address and browser. The client IP is taken from the rightmost X-Forwarded-For entry only.
 - **Infrastructure:** read-only root filesystem, `cap_drop: ALL`, `no-new-privileges` and a process limit. CI runs cargo-audit (exceptions in `.cargo/audit.toml`) and Trivy, produces an SBOM, and runs weekly. Dependabot covers cargo, Actions and Docker. The workflow token is read-only.
 
+**Phase 1.10 — built (v0.7): stress-tested for 15,000 screens**
+- Per-organization real-time channels for players and dashboards; each message is serialized once and shared. Emergency alerts reach 10,000 screens in 0.37 s instead of 7.6 s.
+- Small WebSocket buffers (10 KB per screen instead of 191 KB); batched "last seen" writes; SQLite `synchronous=NORMAL`.
+- Manifest bundles cached per organization and computed once (single-flight), emptied on any content change. Refreshes carry `spread_ms` so large fleets don't all download at once.
+- Load generator in `tools/loadtest`, with results in `STRESS-TEST.md`.
+
 **Phase 2 — Production hardening (next 4–6 weeks)**
 - Postgres backend + S3/R2 media storage + signed URLs; Redis or Postgres LISTEN/NOTIFY so several server instances share the event bus
 - Per-screen timezone; holiday/exception dates; campaigns (ordered layout sets) and share-of-voice
@@ -143,4 +149,4 @@ Campuses run hundreds of screens across faculties, libraries, cafeterias and res
 - Stateless `qivo-server` instances behind a load balancer, with sticky WebSockets not required.
 - Event bus on Postgres LISTEN/NOTIFY to start, then NATS if the fan-out outgrows it.
 - Media on S3-compatible storage behind a CDN. Manifests carry CDN URLs.
-- Rough capacity: one 2-vCPU instance should hold roughly 10k idle player sockets, because tokio keeps a socket at a few KB. This has not been measured yet; a load test before launch should confirm it.
+- Measured capacity (`STRESS-TEST.md`): one 2-vCPU / 8 GB instance held 15,000 screens. It used 169 MB of memory (about 10 KB per screen) and 1–2 % CPU at idle. An emergency alert reached all 15,000 screens in under 0.5 s. Manifests are served at about 2,400 per second. The next limits are SQLite's single writer and running a single process, both covered by Phase 2.

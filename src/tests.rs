@@ -531,3 +531,32 @@ async fn server_side_reset_works_for_anyone_including_the_platform_admin() {
     assert_eq!(s, StatusCode::OK);
     assert!(l.get("mfa_required").is_none());
 }
+
+#[tokio::test]
+async fn cached_manifest_shows_edits_immediately() {
+    let t = setup("10.0.0.40").await;
+    let (owner, _) = t.signup("cache@test.ma").await;
+    let (_, reg) = t.req("POST", "/api/player/register", None, Some(json!({}))).await;
+    let key = reg["device_key"].as_str().unwrap().to_string();
+    let code = reg["pairing_code"].as_str().unwrap();
+    t.req("POST", "/api/displays/claim", Some(&owner), Some(json!({ "code": code, "name": "Hall" }))).await;
+    let (_, pl) = t.req("POST", "/api/playlists", Some(&owner), Some(json!({ "name": "P", "items": [{ "type": "text", "text": "before" }] }))).await;
+    let pid = pl["id"].as_str().unwrap();
+    let (_, l) = t.req("POST", "/api/layouts", Some(&owner), Some(json!({ "name": "L",
+        "regions": [{ "x": 0, "y": 0, "w": 100, "h": 100, "playlist_id": pid }] }))).await;
+    let lid = l["id"].as_str().unwrap();
+    let did = t.req("GET", "/api/displays", Some(&owner), None).await.1[0]["id"].as_str().unwrap().to_string();
+    t.req("PATCH", &format!("/api/displays/{did}"), Some(&owner), Some(json!({ "default_layout_id": lid }))).await;
+    let text = |m: &Value| m["playlists"][pid]["items"][0]["text"].as_str().map(str::to_owned);
+    let m1 = t.req_h("GET", "/api/player/manifest", None, None, &[("x-device-key", &key)]).await.1;
+    assert_eq!(text(&m1).as_deref(), Some("before"));
+    // Served from the cache the second time…
+    let m2 = t.req_h("GET", "/api/player/manifest", None, None, &[("x-device-key", &key)]).await.1;
+    assert_eq!(m1["version"], m2["version"]);
+    // …but an edit must show up on the very next download.
+    assert_eq!(t.req("PUT", &format!("/api/playlists/{pid}"), Some(&owner),
+        Some(json!({ "name": "P", "items": [{ "type": "text", "text": "after" }] }))).await.0, StatusCode::OK);
+    let m3 = t.req_h("GET", "/api/player/manifest", None, None, &[("x-device-key", &key)]).await.1;
+    assert_eq!(text(&m3).as_deref(), Some("after"));
+    assert_ne!(m1["version"], m3["version"]);
+}

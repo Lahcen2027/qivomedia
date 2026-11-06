@@ -443,7 +443,8 @@ function connect() {
     let msg; try { msg = JSON.parse(ev.data); } catch { return; }
     switch (msg.type) {
       case "claimed": ws.close(); loadManifest(); break; // reconnect with org scope
-      case "refresh": loadManifest(); break;
+      // Large fleets: the server asks each screen to wait a random moment so they don't all download at once.
+      case "refresh": setTimeout(loadManifest, Math.random() * Math.min(msg.spread_ms || 0, 10000)); break;
       case "unpaired": localStorage.clear(); location.reload(); break;
       case "interrupt": startInterrupt(msg); break;
       case "alert": alerts.set(msg.alert.id, msg.alert); tick(); break;

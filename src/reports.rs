@@ -6,7 +6,7 @@ use axum::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::{auth::AuthUser, error::AppResult, hub::is_online, state::AppState};
+use crate::{auth::AuthUser, error::AppResult, hub::online_count, state::AppState};
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -84,12 +84,7 @@ async fn overview(State(state): State<AppState>, user: AuthUser) -> AppResult<Js
         .bind(org)
         .fetch_all(&state.db)
         .await?;
-    let mut online = 0;
-    for d in &displays {
-        if is_online(&state, d).await {
-            online += 1;
-        }
-    }
+    let online = online_count(&state, &displays).await;
     let storage: i64 = sqlx::query_scalar("SELECT COALESCE(SUM(size),0) FROM media WHERE org_id = ?")
         .bind(org)
         .fetch_one(&state.db)

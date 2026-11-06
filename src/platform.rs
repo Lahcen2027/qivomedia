@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 use crate::{
     auth::{audit, hash_password, AuthUser},
     error::{AppError, AppResult},
-    hub::is_online,
+    hub::online_count,
     state::AppState,
     util::{new_id, now},
 };
@@ -109,12 +109,7 @@ async fn list_orgs(State(state): State<AppState>, user: AuthUser) -> AppResult<J
             .bind(&r.id)
             .fetch_all(&state.db)
             .await?;
-        let mut online = 0;
-        for i in &ids {
-            if is_online(&state, i).await {
-                online += 1;
-            }
-        }
+        let online = online_count(&state, &ids).await;
         let mut v = serde_json::to_value(&r)?;
         v["online"] = json!(online);
         v["is_own"] = json!(r.id == user.org());

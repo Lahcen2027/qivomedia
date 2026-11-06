@@ -83,8 +83,9 @@ async fn list(State(state): State<AppState>, user: AuthUser) -> AppResult<Json<V
     .fetch_all(&state.db)
     .await?;
     let mut out = Vec::with_capacity(rows.len());
+    let presence = state.presence.read().await;
     for d in rows {
-        let online = is_online(&state, &d.id).await;
+        let online = presence.get(&d.id).copied().unwrap_or(0) > 0;
         out.push(json!({
             "id": d.id, "name": d.name, "status": d.status, "group_id": d.group_id,
             "default_layout_id": d.default_layout_id, "last_seen": d.last_seen, "created_at": d.created_at,

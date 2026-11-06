@@ -36,7 +36,7 @@ use axum::{
     routing::get,
     Router,
 };
-use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
 use tower_http::{
     services::{ServeDir, ServeFile},
     set_header::SetResponseHeaderLayer,
@@ -97,6 +97,9 @@ async fn main() -> anyhow::Result<()> {
     let opts = SqliteConnectOptions::from_str(&db_url)?
         .create_if_missing(true)
         .journal_mode(SqliteJournalMode::Wal)
+        // NORMAL is crash-safe in WAL mode (a power cut can lose only the last moments,
+        // never corrupt the file) and avoids an fsync on every write.
+        .synchronous(SqliteSynchronous::Normal)
         .foreign_keys(true)
         .busy_timeout(std::time::Duration::from_secs(5));
     let db = SqlitePoolOptions::new().max_connections(16).connect_with(opts).await?;
@@ -107,11 +110,13 @@ async fn main() -> anyhow::Result<()> {
     let app = build_app(state.clone(), &web_dir, &data_dir);
 
     tokio::spawn(hub::presence_sweeper(state.clone()));
+    let flush_state = state.clone();
 
     let addr = SocketAddr::from_str(&bind)?;
     tracing::info!("Qivomedia listening on http://{addr}  (dashboard: /, player: /player)");
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app).with_graceful_shutdown(shutdown()).await?;
+    let _ = flush_state.flush_seen().await;
     Ok(())
 }
 
