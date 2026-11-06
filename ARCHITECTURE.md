@@ -104,19 +104,18 @@ CMS, web player, pairing, layouts/zones, playlists/widgets, scheduling, triggers
 **Phase 2 — Production hardening (next 4–6 weeks)**
 - Postgres backend + S3/R2 media storage + signed URLs; Redis or Postgres LISTEN/NOTIFY so several server instances share the event bus
 - Per-screen timezone; holiday/exception dates; campaigns (ordered layout sets) and share-of-voice
-- Screenshots from players, uptime history, offline alerts (email/Slack/WhatsApp)
+- Uptime history, offline alerts (email/Slack/WhatsApp). Screenshots from Windows players were built in v0.8.
 - Passkeys (WebAuthn) for passwordless, phishing-resistant sign-in; university SSO (see section 5); encrypt TOTP secrets at rest
 - Server-side thumbnails + video transcoding (ffmpeg) and image resizing per screen resolution
 - Browser end-to-end tests (Playwright) in CI
 
 **Phase 3 — Players everywhere**
-- **Windows player (Tauri / Rust + WebView2)**, same web player in a ~10 MB native shell. First version built in v0.8 (see above); still to do:
-  - Kiosk mode: fullscreen, always on top, hidden cursor/taskbar, auto-start at boot without login
-  - Watchdog auto-restart on hang/crash + scheduled daily restart
-  - Remote commands: reboot PC, restart player, real screenshot, volume, display on/off schedule (HDMI-CEC via USB adapter, or monitor power saving)
-  - Device health in dashboard: CPU, RAM, disk, temperature, uptime + alerts
-  - Silent self-update; Windows Update restarts held to off-hours; MSI/EXE installer
-  - Image quality: GPU video decode (H.264/HEVC/VP9/AV1; check for and warn if the HEVC extension is missing), pixel-exact rendering under Windows 150/200% scaling
+- **Windows player**, next steps after v0.8:
+  - Silent self-update of the app itself (signed updates served by the Qivomedia server)
+  - Display on/off **schedule** (per group, e.g. 07:00–22:00) and HDMI-CEC TV power through a USB adapter; volume control
+  - Alerts when a screen goes offline, runs hot or is low on disk (email/WhatsApp)
+  - Hardware video-format report (which codecs the GPU decodes) so the dashboard warns before a file that would stutter goes live
+  - Tested hardware list (Intel N150 fanless reference box) and a signed installer (code-signing certificate)
 - Dashboard warning when a layout or media file is lower resolution than the target screen (e.g. 1080p photo on a 4K TV)
 - Installer guide for TV settings: overscan off (“Just Scan”/“Screen Fit”), HDMI input in PC/Game mode, motion smoothing & extra sharpening off
 - Android / Android TV app (Kotlin shell + WebView of the web player, kiosk mode, boot-start, remote reboot, OTA)
