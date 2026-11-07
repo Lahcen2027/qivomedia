@@ -68,6 +68,7 @@ pub fn client_ip(h: &HeaderMap) -> String {
 
 pub const MIN: Duration = Duration::from_secs(60);
 pub const HOUR: Duration = Duration::from_secs(3600);
+pub const MINUTE: Duration = Duration::from_secs(60);
 
 #[cfg(test)]
 mod tests {

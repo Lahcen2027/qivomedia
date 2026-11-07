@@ -602,3 +602,278 @@ async fn native_player_screenshot_and_device_commands() {
     // Another organization's screenshot is not reachable.
     assert_eq!(t.req("GET", "/api/displays/not-mine/screenshot", Some(&owner), None).await.0, StatusCode::NOT_FOUND);
 }
+
+/// Single sign-on against a fake OpenID Connect provider that runs inside the test:
+/// discovery, key set and token endpoint, with ID tokens signed by a key generated per run.
+mod sso_flow {
+    use super::*;
+    use axum::{extract::State, routing::{get, post}, Form, Json};
+    use base64::{engine::general_purpose::URL_SAFE_NO_PAD as B64, Engine};
+    use ring::{rand::SystemRandom, signature::{EcdsaKeyPair, KeyPair, ECDSA_P256_SHA256_FIXED_SIGNING}};
+    use sha2::{Digest, Sha256};
+    use std::{collections::HashMap, sync::{Arc, Mutex}};
+
+    struct Key {
+        pkcs8: Vec<u8>,
+        x: String,
+        y: String,
+    }
+    fn new_key() -> Arc<Key> {
+        let rng = SystemRandom::new();
+        let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &rng).unwrap();
+        let kp = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8.as_ref(), &rng).unwrap();
+        let p = kp.public_key().as_ref(); // 0x04 ‖ x ‖ y
+        Arc::new(Key { pkcs8: pkcs8.as_ref().to_vec(), x: B64.encode(&p[1..33]), y: B64.encode(&p[33..65]) })
+    }
+
+    type Codes = Arc<Mutex<HashMap<String, (Value, String, Arc<Key>)>>>;
+    #[derive(Clone)]
+    struct Idp {
+        base: String,
+        key: Arc<Key>,
+        codes: Codes,
+    }
+
+    async fn start_idp() -> Idp {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+        let idp = Idp { base: base.clone(), key: new_key(), codes: Default::default() };
+        let app = Router::new()
+            .route("/.well-known/openid-configuration", get(|State(i): State<Idp>| async move {
+                Json(json!({ "issuer": i.base, "authorization_endpoint": format!("{}/authorize", i.base),
+                    "token_endpoint": format!("{}/token", i.base), "jwks_uri": format!("{}/jwks", i.base) }))
+            }))
+            .route("/jwks", get(|State(i): State<Idp>| async move {
+                Json(json!({ "keys": [{ "kty": "EC", "crv": "P-256", "x": i.key.x, "y": i.key.y, "kid": "k1", "alg": "ES256", "use": "sig" }] }))
+            }))
+            .route("/token", post(|State(i): State<Idp>, Form(f): Form<HashMap<String, String>>| async move {
+                let entry = i.codes.lock().unwrap().remove(f.get("code").map(String::as_str).unwrap_or(""));
+                let Some((claims, challenge, key)) = entry else { return (StatusCode::BAD_REQUEST, Json(json!({ "error": "invalid_grant" }))) };
+                // The server must prove it started this sign-in (PKCE) and know the client secret.
+                let verifier = f.get("code_verifier").cloned().unwrap_or_default();
+                if B64.encode(Sha256::digest(verifier.as_bytes())) != challenge || f.get("client_secret").map(String::as_str) != Some("s3cret") {
+                    return (StatusCode::BAD_REQUEST, Json(json!({ "error": "invalid_grant" })));
+                }
+                let mut h = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::ES256);
+                h.kid = Some("k1".into());
+                let tok = jsonwebtoken::encode(&h, &claims, &jsonwebtoken::EncodingKey::from_ec_der(&key.pkcs8)).unwrap();
+                (StatusCode::OK, Json(json!({ "id_token": tok, "access_token": "x", "token_type": "Bearer" })))
+            }))
+            .with_state(idp.clone());
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        idp
+    }
+
+    async fn raw(t: &T, path: &str, cookie: Option<&str>) -> (StatusCode, axum::http::HeaderMap, String) {
+        let mut b = Request::builder().uri(path).header("x-forwarded-for", &t.ip).header("host", "qivo.test");
+        if let Some(c) = cookie {
+            b = b.header("cookie", c);
+        }
+        let res = t.app.clone().oneshot(b.body(Body::empty()).unwrap()).await.unwrap();
+        let (s, h) = (res.status(), res.headers().clone());
+        let body = String::from_utf8_lossy(&res.into_body().collect().await.unwrap().to_bytes()).to_string();
+        (s, h, body)
+    }
+
+    #[derive(Default)]
+    struct Opts {
+        no_cookie: bool,
+        sign_with: Option<Arc<Key>>,
+        keep_nonce: bool,
+    }
+
+    /// One sign-in: start → (provider) → callback. Returns where the browser is sent and the
+    /// session token if one was created.
+    async fn attempt(t: &T, idp: &Idp, provider_id: &str, mut claims: Value, o: Opts) -> (String, Option<String>) {
+        let (s, h, _) = raw(t, &format!("/api/auth/sso/{provider_id}/start"), None).await;
+        assert_eq!(s, StatusCode::SEE_OTHER);
+        let loc = reqwest::Url::parse(h.get("location").unwrap().to_str().unwrap()).unwrap();
+        assert!(loc.as_str().starts_with(&format!("{}/authorize", idp.base)));
+        let q: HashMap<String, String> = loc.query_pairs().into_owned().collect();
+        assert_eq!(q["code_challenge_method"], "S256");
+        assert_eq!(q["redirect_uri"], "https://qivo.test/api/auth/sso/callback");
+        let state_cookie = h.get_all("set-cookie").iter().filter_map(|v| v.to_str().ok()).find(|c| c.starts_with("qivo_sso=")).unwrap().to_string();
+        assert!(state_cookie.contains("HttpOnly") && state_cookie.contains("SameSite=Lax"));
+        let now = chrono::Utc::now().timestamp();
+        let c = claims.as_object_mut().unwrap();
+        c.entry("iss").or_insert(json!(idp.base));
+        c.entry("aud").or_insert(json!(q["client_id"]));
+        c.entry("exp").or_insert(json!(now + 300));
+        c.entry("iat").or_insert(json!(now));
+        if !o.keep_nonce {
+            c.insert("nonce".into(), json!(q["nonce"]));
+        }
+        let code = format!("code-{}", uuid::Uuid::new_v4());
+        idp.codes.lock().unwrap().insert(code.clone(), (claims, q["code_challenge"].clone(), o.sign_with.unwrap_or_else(|| idp.key.clone())));
+        let cookie = state_cookie.split(';').next().unwrap().to_string();
+        let (s, h, body) = raw(t, &format!("/api/auth/sso/callback?code={code}&state={}", q["state"]), (!o.no_cookie).then_some(cookie.as_str())).await;
+        assert_eq!(s, StatusCode::OK);
+        let to = body.split("url=").nth(1).and_then(|r| r.split('"').next()).unwrap_or("").to_string();
+        let session = h.get_all("set-cookie").iter().filter_map(|v| v.to_str().ok())
+            .find_map(|c| c.strip_prefix("qivo_session=").map(|r| r.split(';').next().unwrap_or("").to_string()));
+        (to, session)
+    }
+
+    async fn setup_with_provider(t: &T, idp: &Idp, extra: Value) -> (String, String) {
+        let (owner, _) = t.signup("owner@univ.ma").await;
+        let mut body = json!({ "kind": "oidc", "name": "Université Test", "issuer": idp.base, "client_id": "qivo-client",
+            "client_secret": "s3cret", "domains": "univ.ma", "default_role": "viewer",
+            "group_roles": [{ "group": "comms-team", "role": "editor" }, { "group": "it-admins", "role": "admin" }] });
+        for (k, v) in extra.as_object().unwrap() {
+            body[k] = v.clone();
+        }
+        let (s, p) = t.req("POST", "/api/sso/providers", Some(&owner), Some(body)).await;
+        assert_eq!(s, StatusCode::OK, "{p}");
+        (owner, p["id"].as_str().unwrap().to_string())
+    }
+
+    #[tokio::test]
+    async fn university_account_signs_in_gets_created_and_role_follows_groups() {
+        let t = setup("10.1.0.1").await;
+        let idp = start_idp().await;
+        let (owner, pid) = setup_with_provider(&t, &idp, json!({})).await;
+
+        // Settings never reveal the secret, and it is stored encrypted.
+        let list = t.req("GET", "/api/sso/providers", Some(&owner), None).await.1;
+        assert!(!list.to_string().contains("s3cret"));
+        assert_eq!(list["providers"][0]["has_secret"], true);
+        assert_eq!(list["redirect_uri"], "https://qivo.test/api/auth/sso/callback");
+        let stored: String = sqlx::query_scalar("SELECT client_secret_enc FROM sso_providers").fetch_one(&t.db).await.unwrap();
+        assert!(stored.starts_with("v1:") && !stored.contains("s3cret"));
+
+        // The login page finds the provider from the email domain.
+        assert_eq!(t.req("GET", "/api/auth/sso/discover?email=amina@univ.ma", None, None).await.1["provider"]["id"], pid.as_str());
+        assert!(t.req("GET", "/api/auth/sso/discover?email=amina@gmail.com", None, None).await.1["provider"].is_null());
+
+        // First sign-in creates the account, with the role from the groups.
+        let claims = json!({ "sub": "u-amina", "email": "Amina@univ.ma", "email_verified": true, "name": "Amina B.", "groups": ["comms-team"] });
+        let (to, session) = attempt(&t, &idp, &pid, claims, Opts::default()).await;
+        assert_eq!(to, "/#/");
+        let session = session.expect("signed in");
+        let me = t.req("GET", "/api/auth/me", Some(&session), None).await.1;
+        assert_eq!(me["user"]["email"], "amina@univ.ma");
+        assert_eq!(me["user"]["role"], "editor");
+        assert_eq!(me["user"]["name"], "Amina B.");
+
+        // Next time, same account (matched by subject even if the email changed); new group → new role.
+        let claims = json!({ "sub": "u-amina", "email": "amina.b@univ.ma", "email_verified": true, "groups": ["comms-team", "it-admins"] });
+        let (_, session2) = attempt(&t, &idp, &pid, claims, Opts::default()).await;
+        let me2 = t.req("GET", "/api/auth/me", Some(&session2.unwrap()), None).await.1;
+        assert_eq!(me2["user"]["id"], me["user"]["id"]);
+        assert_eq!(me2["user"]["role"], "admin");
+        let users: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users").fetch_one(&t.db).await.unwrap();
+        assert_eq!(users, 2);
+        let audit = t.req("GET", "/api/audit", Some(&owner), None).await.1.to_string();
+        assert!(audit.contains("auth.sso_login") && audit.contains("auth.sso_user_created") && audit.contains("auth.sso_role_changed"));
+    }
+
+    #[tokio::test]
+    async fn forged_replayed_or_foreign_sign_ins_are_refused() {
+        let t = setup("10.1.0.2").await;
+        let idp = start_idp().await;
+        let (_, pid) = setup_with_provider(&t, &idp, json!({})).await;
+        let ok = || json!({ "sub": "u1", "email": "x@univ.ma", "email_verified": true });
+
+        let cases: Vec<(&str, Value, Opts, &str)> = vec![
+            ("other domain", json!({ "sub": "u1", "email": "x@gmail.com", "email_verified": true }), Opts::default(), "domain"),
+            ("unverified email", json!({ "sub": "u1", "email": "x@univ.ma", "email_verified": false }), Opts::default(), "email_unverified"),
+            ("signed by someone else", ok(), Opts { sign_with: Some(new_key()), ..Default::default() }, "token"),
+            ("wrong nonce", { let mut c = ok(); c["nonce"] = json!("replayed"); c }, Opts { keep_nonce: true, ..Default::default() }, "token"),
+            ("expired", { let mut c = ok(); c["exp"] = json!(chrono::Utc::now().timestamp() - 3600); c }, Opts::default(), "token"),
+            ("for another app", { let mut c = ok(); c["aud"] = json!("someone-else"); c }, Opts::default(), "token"),
+            ("from another issuer", { let mut c = ok(); c["iss"] = json!("https://evil.example"); c }, Opts::default(), "token"),
+            ("started in another browser", ok(), Opts { no_cookie: true, ..Default::default() }, "session_mismatch"),
+        ];
+        for (what, claims, o, want) in cases {
+            let (to, session) = attempt(&t, &idp, &pid, claims, o).await;
+            assert_eq!(to, format!("/#/login?sso_error={want}"), "{what}");
+            assert!(session.is_none(), "{what}: must not sign in");
+        }
+        let users: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users").fetch_one(&t.db).await.unwrap();
+        assert_eq!(users, 1, "no account was created by any of these");
+
+        // A state can be used once.
+        let (s, h, _) = raw(&t, &format!("/api/auth/sso/{pid}/start"), None).await;
+        assert_eq!(s, StatusCode::SEE_OTHER);
+        let loc = reqwest::Url::parse(h.get("location").unwrap().to_str().unwrap()).unwrap();
+        let st = loc.query_pairs().find(|(k, _)| k == "state").unwrap().1.to_string();
+        let cookie = format!("qivo_sso={st}");
+        let (_, _, b1) = raw(&t, &format!("/api/auth/sso/callback?code=nope&state={st}"), Some(&cookie)).await;
+        assert!(b1.contains("sso_error=token"));
+        let (_, _, b2) = raw(&t, &format!("/api/auth/sso/callback?code=nope&state={st}"), Some(&cookie)).await;
+        assert!(b2.contains("sso_error=expired"), "second use of the same state");
+        // The provider reporting a cancelled sign-in.
+        let (_, _, b3) = raw(&t, "/api/auth/sso/callback?error=access_denied&state=x", None).await;
+        assert!(b3.contains("sso_error=cancelled"));
+    }
+
+    #[tokio::test]
+    async fn invited_only_mode_links_existing_members_and_refuses_strangers() {
+        let t = setup("10.1.0.3").await;
+        let idp = start_idp().await;
+        let (owner, pid) = setup_with_provider(&t, &idp, json!({ "auto_create": false, "group_roles": [] })).await;
+        let (s, _) = t.req("POST", "/api/users", Some(&owner),
+            Some(json!({ "email": "karim@univ.ma", "name": "Karim", "role": "editor", "password": "amber-falcon-73" }))).await;
+        assert_eq!(s, StatusCode::OK);
+        let (to, _) = attempt(&t, &idp, &pid, json!({ "sub": "s-stranger", "email": "nobody@univ.ma", "email_verified": true }), Opts::default()).await;
+        assert_eq!(to, "/#/login?sso_error=not_invited");
+        let (to, session) = attempt(&t, &idp, &pid, json!({ "sub": "s-karim", "email": "karim@univ.ma", "email_verified": true }), Opts::default()).await;
+        assert_eq!(to, "/#/");
+        let me = t.req("GET", "/api/auth/me", Some(&session.unwrap()), None).await.1;
+        assert_eq!(me["user"]["email"], "karim@univ.ma");
+        assert_eq!(me["user"]["role"], "editor", "no group rules: role unchanged");
+
+        // An account that belongs to another organization is never taken over.
+        sqlx::query("INSERT INTO organizations (id, name, created_at) VALUES ('org2', 'Other', '2026-01-01')").execute(&t.db).await.unwrap();
+        sqlx::query("INSERT INTO users (id, org_id, email, name, password_hash, role, created_at) VALUES ('u-o2', 'org2', 'dean@univ.ma', 'Dean', 'x', 'owner', '2026-01-01')")
+            .execute(&t.db).await.unwrap();
+        let (to, _) = attempt(&t, &idp, &pid, json!({ "sub": "s-dean", "email": "dean@univ.ma", "email_verified": true }), Opts::default()).await;
+        assert_eq!(to, "/#/login?sso_error=other_org");
+    }
+
+    #[tokio::test]
+    async fn requiring_sso_blocks_member_passwords_but_keeps_an_admin_way_in() {
+        let t = setup("10.1.0.4").await;
+        let (owner, _) = t.signup("owner@univ.ma").await;
+        // Can't require SSO without a provider (it would lock everyone out).
+        assert_eq!(t.req("PUT", "/api/sso/policy", Some(&owner), Some(json!({ "sso_required": true }))).await.0, StatusCode::BAD_REQUEST);
+        let idp = start_idp().await;
+        let (s, p) = t.req("POST", "/api/sso/providers", Some(&owner), Some(json!({ "kind": "oidc", "name": "U", "issuer": idp.base,
+            "client_id": "c", "client_secret": "s3cret", "domains": "univ.ma" }))).await;
+        assert_eq!(s, StatusCode::OK, "{p}");
+        t.req("POST", "/api/users", Some(&owner), Some(json!({ "email": "ed@univ.ma", "name": "Editor Person", "role": "editor", "password": "violet-canyon-42" }))).await;
+        assert_eq!(t.req("PUT", "/api/sso/policy", Some(&owner), Some(json!({ "sso_required": true }))).await.0, StatusCode::OK);
+        assert_eq!(t.login("ed@univ.ma", "violet-canyon-42").await.0, StatusCode::FORBIDDEN);
+        assert_eq!(t.login("owner@univ.ma", "correct-horse").await.0, StatusCode::OK, "owner keeps the emergency password");
+        // A wrong password is still just "wrong password" (no hint that the account exists).
+        assert_eq!(t.login("ed@univ.ma", "wrong-password-1").await.0, StatusCode::UNAUTHORIZED);
+        // Removing the last provider turns the requirement off.
+        t.req("DELETE", &format!("/api/sso/providers/{}", p["id"].as_str().unwrap()), Some(&owner), None).await;
+        assert_eq!(t.login("ed@univ.ma", "violet-canyon-42").await.0, StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn provider_settings_are_validated() {
+        let t = setup("10.1.0.5").await;
+        let (owner, _) = t.signup("owner@univ.ma").await;
+        let idp = start_idp().await;
+        let base = json!({ "kind": "oidc", "name": "U", "issuer": idp.base, "client_id": "c", "client_secret": "s" });
+        let with = |k: &str, v: Value| { let mut b = base.clone(); b[k] = v; b };
+        // Not HTTPS (and not this machine).
+        assert_eq!(t.req("POST", "/api/sso/providers", Some(&owner), Some(with("issuer", json!("http://idp.example.com")))).await.0, StatusCode::BAD_REQUEST);
+        // Google without a Workspace domain would let any Gmail account in.
+        assert_eq!(t.req("POST", "/api/sso/providers", Some(&owner), Some(with("kind", json!("google")))).await.0, StatusCode::BAD_REQUEST);
+        // Microsoft's shared endpoints are refused: the tenant must be the university's own.
+        let mut ms = with("kind", json!("microsoft"));
+        ms["tenant"] = json!("common");
+        assert_eq!(t.req("POST", "/api/sso/providers", Some(&owner), Some(ms)).await.0, StatusCode::BAD_REQUEST);
+        assert_eq!(t.req("POST", "/api/sso/providers", Some(&owner), Some(with("default_role", json!("owner")))).await.0, StatusCode::BAD_REQUEST);
+        // A domain can belong to one provider only.
+        assert_eq!(t.req("POST", "/api/sso/providers", Some(&owner), Some(with("domains", json!("univ.ma")))).await.0, StatusCode::OK);
+        assert_eq!(t.req("POST", "/api/sso/providers", Some(&owner), Some(with("domains", json!("UNIV.ma")))).await.0, StatusCode::CONFLICT);
+        // Only admins manage sign-in.
+        t.req("POST", "/api/users", Some(&owner), Some(json!({ "email": "ed@univ.ma", "name": "Editor Person", "role": "editor", "password": "violet-canyon-42" }))).await;
+        let ed = t.login_token("ed@univ.ma", "violet-canyon-42").await;
+        assert_eq!(t.req("GET", "/api/sso/providers", Some(&ed), None).await.0, StatusCode::FORBIDDEN);
+    }
+}

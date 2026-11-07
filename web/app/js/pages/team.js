@@ -1,5 +1,6 @@
 import { api, h, esc, ago, modal, confirmDialog, guard, formData, can, store, toast } from "../core.js";
 import { securitySection, resetMemberMfa } from "./security.js";
+import { ssoSection } from "./sso.js";
 
 export async function render(root) {
   const users = await api("/users");
@@ -12,6 +13,7 @@ export async function render(root) {
     <div class="head"><div><h1>Team & audit</h1><p>Role-based access: <b>viewer</b> (read-only) · <b>editor</b> (content & schedules) · <b>admin</b> (screens & users) · <b>owner</b>.</p></div>
       <div class="row"><button class="btn" data-chpw>Change my password</button>${can.admin() ? `<button class="btn primary" data-new>+ Add member</button>` : ""}</div></div>
     <div data-sec></div>
+    ${can.admin() ? `<div data-sso></div>` : ""}
     <div class="card flush" style="margin-bottom:18px"><table><thead><tr><th>Name</th><th>Email</th><th>Role</th><th>2FA</th><th>Joined</th><th></th></tr></thead><tbody>
       ${users.map((u) => `<tr data-id="${u.id}"><td><b>${esc(u.name)}</b>${u.id === store.me.user.id ? ` <span class="faint small">(you)</span>` : ""}</td><td>${esc(u.email)}</td><td>${roleBadge(u.role)}</td>
         <td>${u.mfa_enabled ? `<span class="badge ok">On</span>` : `<span class="badge">Off</span>`}</td>
@@ -45,6 +47,7 @@ export async function render(root) {
     onSubmit: async (f) => { await api(`/users/${store.me.user.id}`, { method: "PATCH", body: formData(f) }); toast("Password changed"); },
   });
   securitySection(page.querySelector("[data-sec]"), users, rerender).catch((e) => toast(e.message, true));
+  if (can.admin()) ssoSection(page.querySelector("[data-sso]")).catch((e) => toast(e.message, true));
   page.querySelectorAll("tr[data-id]").forEach((tr) => {
     const id = tr.dataset.id;
     tr.querySelector("[data-mfa]")?.addEventListener("click", async () => { if (await resetMemberMfa(users.find((u) => u.id === id))) rerender(); });

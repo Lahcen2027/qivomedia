@@ -70,14 +70,14 @@ impl AuthUser {
     }
 }
 
-type UserRow = (String, String, String, String, String, String, bool, bool, bool, bool, Option<String>);
+type UserRow = (String, String, String, String, String, String, bool, bool, bool, bool, Option<String>, bool);
 
 pub async fn user_from_token(state: &AppState, token: &str) -> AppResult<User> {
     let idle_cutoff = (chrono::Utc::now() - chrono::Duration::hours(session::idle_hours()))
         .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     let row: Option<UserRow> = sqlx::query_as(
         "SELECT u.id, u.org_id, u.email, u.name, u.role, u.created_at, u.platform_admin, u.mfa_enabled,
-                o.suspended, o.require_mfa, s.last_used_at
+                o.suspended, o.require_mfa, s.last_used_at, s.sso
            FROM sessions s JOIN users u ON u.id = s.user_id JOIN organizations o ON o.id = u.org_id
           WHERE s.token_hash = ? AND s.expires_at > ? AND (s.last_used_at IS NULL OR s.last_used_at > ?)",
     )
@@ -86,7 +86,7 @@ pub async fn user_from_token(state: &AppState, token: &str) -> AppResult<User> {
     .bind(&idle_cutoff)
     .fetch_optional(&state.db)
     .await?;
-    let (id, org_id, email, name, role, created_at, platform_admin, mfa_enabled, suspended, require_mfa, last_used) =
+    let (id, org_id, email, name, role, created_at, platform_admin, mfa_enabled, suspended, require_mfa, last_used, via_sso) =
         row.ok_or(AppError::Unauthorized)?;
     if suspended && !platform_admin {
         return Err(AppError::Forbidden("this account is suspended — contact your provider".into()));
@@ -96,7 +96,7 @@ pub async fn user_from_token(state: &AppState, token: &str) -> AppResult<User> {
     if last_used.map(|l| l < stale).unwrap_or(true) {
         let _ = sqlx::query("UPDATE sessions SET last_used_at = ? WHERE token_hash = ?").bind(now()).bind(sha256_hex(token)).execute(&state.db).await;
     }
-    Ok(User { id, org_id, email, name, role, created_at, platform_admin, mfa_enabled, mfa_setup_required: require_mfa && !mfa_enabled })
+    Ok(User { id, org_id, email, name, role, created_at, platform_admin, mfa_enabled, mfa_setup_required: require_mfa && !mfa_enabled && !via_sso })
 }
 
 /// Endpoints a user may reach while their organization still requires them to set up 2FA.
@@ -251,11 +251,14 @@ async fn login(State(state): State<AppState>, headers: HeaderMap, Json(req): Jso
     if ratelimit::exceeded(&acct_key, MAX_FAILED, LOCKOUT) || ratelimit::exceeded(&ip_key, MAX_FAILED * 6, LOCKOUT) {
         return Err(AppError::TooMany("too many failed attempts — wait 15 minutes or reset your password".into()));
     }
-    let row: Option<(String, String, String, bool)> = sqlx::query_as("SELECT id, password_hash, org_id, mfa_enabled FROM users WHERE email = ?")
-        .bind(&email)
-        .fetch_optional(&state.db)
-        .await?;
-    let Some((uid, hash, org_id, mfa_enabled)) = row else {
+    let row: Option<(String, String, String, bool, String, bool)> = sqlx::query_as(
+        "SELECT u.id, u.password_hash, u.org_id, u.mfa_enabled, u.role, o.sso_required
+           FROM users u JOIN organizations o ON o.id = u.org_id WHERE u.email = ?",
+    )
+    .bind(&email)
+    .fetch_optional(&state.db)
+    .await?;
+    let Some((uid, hash, org_id, mfa_enabled, role, sso_required)) = row else {
         // Spend comparable time to avoid user enumeration via timing.
         let _ = hash_password(&req.password);
         ratelimit::hit(&acct_key);
@@ -269,6 +272,12 @@ async fn login(State(state): State<AppState>, headers: HeaderMap, Json(req): Jso
         return Err(AppError::Unauthorized);
     }
     ratelimit::reset(&acct_key);
+    // Organizations that require single sign-on: members use their university account.
+    // Owners and admins keep the password as an emergency way in.
+    if sso_required && !matches!(role.as_str(), "owner" | "admin") {
+        audit(&state, &org_id, Some(&uid), "auth.password_refused_sso_required", &who(&headers)).await;
+        return Err(AppError::Forbidden("your organization signs in with single sign-on: use “Sign in with your organization account”".into()));
+    }
     if mfa_enabled {
         // Second step required: hand back a short-lived ticket, not a session.
         let ticket = crate::mfa::issue_ticket(&uid);

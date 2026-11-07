@@ -61,7 +61,9 @@ async function authScreen() {
     <div class="field"><label>Email</label><input name="email" type="email" required autocomplete="username"></div>
     <div class="field"><label>Password</label><input name="password" type="password" required ${signup ? 'minlength="12"' : ""} autocomplete="${signup ? "new-password" : "current-password"}">${signup ? `<div class="small faint" style="margin-top:4px">At least 12 characters. A short phrase of 3–4 words is strong and easy to remember.</div>` : ""}</div>
     <button class="btn primary" style="width:100%;justify-content:center;padding:10px">${signup ? "Create workspace" : "Sign in"}</button>
-    ${!signup ? `<p class="small" style="text-align:center;margin:14px 0 0"><a href="#/forgot">Forgot your password?</a></p>` : ""}
+    ${!signup ? `<div class="sso-or"><span>or</span></div>
+      <button type="button" class="btn" data-sso style="width:100%;justify-content:center;padding:10px">Sign in with your organization account</button>
+      <p class="small" style="text-align:center;margin:14px 0 0"><a href="#/forgot">Forgot your password?</a></p>` : ""}
     ${!st.needs_setup && st.allow_signup ? `<p class="small muted" style="text-align:center;margin:10px 0 0">${signup ? `<a href="#/login">Have an account? Sign in</a>` : `<a href="#/signup">Create a new workspace</a>`}</p>` : ""}
   </form></div>`);
   app.appendChild(card);
@@ -79,7 +81,55 @@ async function authScreen() {
       btn.disabled = false;
     }
   };
+  if (!signup) wireSso(card);
   card.querySelector("input").focus();
+}
+
+// Why a single sign-on attempt came back to the login screen (codes from the server).
+const SSO_ERRORS = {
+  cancelled: "Sign-in was cancelled.",
+  domain: "This account isn't from an email domain your organization allows.",
+  email_unverified: "Your identity provider hasn't verified this email address.",
+  no_email: "Your identity provider didn't send an email address for this account.",
+  not_invited: "You don't have a Qivomedia account yet. Ask an administrator to invite you.",
+  other_org: "This email already belongs to another Qivomedia organization. Contact support.",
+  suspended: "This organization is suspended. Contact your provider.",
+  disabled: "Single sign-on is turned off for your organization. Sign in with your password.",
+  expired: "The sign-in took too long or was already used. Please try again.",
+  session_mismatch: "The sign-in was started in another browser or tab. Please try again here.",
+  provider_unreachable: "Your identity provider couldn't be reached. Try again in a moment.",
+  provider_error: "Your identity provider refused the sign-in. Contact your IT department.",
+  token: "Your identity provider's answer couldn't be verified. Contact your administrator.",
+};
+
+/** "Sign in with your organization account": finds the provider from the email domain. */
+function wireSso(card) {
+  const email = card.querySelector("input[name=email]");
+  const btn = card.querySelector("[data-sso]");
+  const err = new URLSearchParams(location.hash.split("?")[1] || "").get("sso_error");
+  if (err) {
+    toast(SSO_ERRORS[err] || "Single sign-on failed. Please try again.", true, 12000);
+    history.replaceState(null, "", "#/login");
+  }
+  let found = null;
+  const lookup = async () => {
+    const v = email.value.trim();
+    if (!v.includes("@")) return null;
+    const r = await api(`/auth/sso/discover?email=${encodeURIComponent(v)}`).catch(() => ({ provider: null }));
+    found = r.provider;
+    const label = { microsoft: "Microsoft", google: "Google" }[found?.kind];
+    btn.textContent = found ? `Continue with ${found.name}${label ? ` (${label})` : ""}` : "Sign in with your organization account";
+    btn.classList.toggle("primary-soft", !!found);
+    return found;
+  };
+  email.addEventListener("change", lookup);
+  btn.onclick = async () => {
+    if (!email.value.trim()) { toast("Enter your organization email first"); email.focus(); return; }
+    const p = found || (await lookup());
+    if (p) { btn.disabled = true; btn.textContent = `Opening ${p.name}…`; location.href = p.start_url; return; }
+    const domain = email.value.split("@")[1] || "this domain";
+    toast(`Single sign-on isn't set up for ${domain}. Sign in with your password.`, true, 8000);
+  };
 }
 
 function authCard(inner) {

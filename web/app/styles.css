@@ -193,3 +193,7 @@ tr:hover td { background: rgba(255,255,255,.015); }
 .alertbar svg { width: 20px; height: 20px; flex: none; }
 #alertbar[hidden] { display: none; }
 .faint.bad { color: var(--bad); }
+
+.sso-or { display: flex; align-items: center; gap: 10px; margin: 16px 0 12px; color: var(--muted); font-size: 12px; }
+.sso-or::before, .sso-or::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.btn.primary-soft { border-color: var(--accent); color: var(--text); background: color-mix(in srgb, var(--accent) 16%, transparent); }

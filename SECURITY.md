@@ -26,6 +26,14 @@ Controls are grouped by the [OWASP ASVS](https://owasp.org/www-project-applicati
   4. someone with access to the server runs `qivo-server reset-mfa <email>`. This is the last resort, and the only way to recover the platform admin.
 
   Every reset signs the person out everywhere, invalidates their old authenticator and recovery codes, and emails them, so a reset they didn't ask for doesn't go unnoticed.
+- **Single sign-on** (OpenID Connect: Microsoft Entra ID, Google Workspace, Keycloak and others; set-up in `SSO.md`):
+  - Authorization code flow with **PKCE (S256)**, a single-use `state` that expires after 10 minutes and is tied to the browser by a cookie, and a `nonce` checked inside the ID token.
+  - ID tokens are verified against the provider's published keys (JWKS, refreshed when keys rotate), plus issuer, audience and expiry. Providers must use HTTPS.
+  - Identities are linked by the provider's stable subject id. Microsoft accounts are matched by **UPN** (whose domains the tenant must verify) instead of the editable `email` claim, and guest accounts are refused. Google accounts must belong to the listed Workspace domain (`hd`), with a verified email.
+  - An SSO sign-in never takes over an account in another organization.
+  - Client secrets are encrypted at rest with **AES-256-GCM**. The key is `QIVO_SECRET_KEY` or `secret.key` (owner-only) in the data folder.
+  - Organizations can **require SSO**. Members then can't use a password, while owners and admins keep theirs as an emergency way in.
+  - Multi-factor sign-in is the identity provider's job for SSO sessions, so the organization's 2FA policy doesn't ask for a second code.
 
 ### Sessions (V3)
 - The session token sits only in an **HttpOnly cookie**, so JavaScript can't read it and a script-injection (XSS) bug can't steal it. Over HTTPS the cookie is named `__Host-qivo_session` (Secure, host-bound, `Path=/`), and it's always `SameSite=Strict`.
@@ -67,7 +75,7 @@ The audit log records sign-ins (with IP address and browser), failed sign-ins, 2
 
 ## Known limitations / roadmap
 - **Passkeys (WebAuthn)** for passwordless and phishing-resistant sign-in are next.
-- **University SSO** (SAML/OIDC with Microsoft Entra ID or Google Workspace) is planned.
+- **SAML 2.0** single sign-on (for universities without OpenID Connect) is planned. OpenID Connect is built in.
 - **Screen device keys** live in the screen's browser storage. A key only lets that one screen read its own content, and an admin can revoke it by deleting the screen.
 - **Rate limits** are kept per server process. Running several app instances will need a shared store, such as Redis or Postgres.
-- 2FA secrets are stored in plain text in the database, which is protected by the server's own access controls and the encrypted backups you make. Encrypting them with a separate key is planned.
+- 2FA secrets are stored in plain text in the database, which is protected by the server's own access controls and the encrypted backups you make. Encrypting them with the same key as the SSO secrets is planned.

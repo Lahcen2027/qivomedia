@@ -112,6 +112,7 @@ struct SessionRow {
     ip: Option<String>,
     user_agent: Option<String>,
     mfa: bool,
+    sso: bool,
 }
 
 fn current_hash(h: &HeaderMap) -> String {
@@ -120,7 +121,7 @@ fn current_hash(h: &HeaderMap) -> String {
 
 async fn list(State(state): State<AppState>, headers: HeaderMap, user: AuthUser) -> AppResult<Json<Vec<Value>>> {
     let rows = sqlx::query_as::<_, SessionRow>(
-        "SELECT id, token_hash, created_at, last_used_at, ip, user_agent, mfa FROM sessions
+        "SELECT id, token_hash, created_at, last_used_at, ip, user_agent, mfa, sso FROM sessions
           WHERE user_id = ? AND expires_at > ? ORDER BY last_used_at DESC",
     )
     .bind(&user.0.id).bind(now())
@@ -128,7 +129,7 @@ async fn list(State(state): State<AppState>, headers: HeaderMap, user: AuthUser)
     let cur = current_hash(&headers);
     Ok(Json(rows.into_iter().map(|r| json!({
         "id": r.id, "created_at": r.created_at, "last_used_at": r.last_used_at, "ip": r.ip,
-        "user_agent": r.user_agent, "mfa": r.mfa, "current": r.token_hash == cur,
+        "user_agent": r.user_agent, "mfa": r.mfa, "sso": r.sso, "current": r.token_hash == cur,
     })).collect()))
 }
 

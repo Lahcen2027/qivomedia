@@ -159,7 +159,7 @@ The database updates itself on start. Screens reconnect on their own and keep pl
 
 ### Backups
 
-`deploy/backup.sh` creates one `.tar.gz` holding a consistent copy of the database and all media, in `/var/backups/qivomedia`. It keeps the last 14. **Copy these off the server regularly**, for example to another server, an S3 bucket or your NAS. A backup on the same disk doesn't protect you if that disk fails.
+`deploy/backup.sh` creates one `.tar.gz` holding a consistent copy of the database, all media and the encryption key for stored secrets (`secret.key`), in `/var/backups/qivomedia`. Because of that key, **keep backups as private as the server itself**. It keeps the last 14. **Copy these off the server regularly**, for example to another server, an S3 bucket or your NAS. A backup on the same disk doesn't protect you if that disk fails.
 
 ### Restoring a backup
 
@@ -170,6 +170,7 @@ docker run --rm -v qivomedia_qivo-data:/data -v /tmp/restore:/restore debian:boo
   rm -f /data/qivo.db /data/qivo.db-wal /data/qivo.db-shm &&
   cp /restore/backups/qivo-*.db /data/qivo.db &&
   cp -a /restore/media/. /data/media/ &&
+  { [ ! -f /restore/secret.key ] || cp /restore/secret.key /data/secret.key; } &&
   chown -R 10001:10001 /data'
 qivo start qivomedia
 ```
@@ -186,4 +187,6 @@ qivo start qivomedia
 | "Too many failed attempts" | The account locks for 15 minutes after 5 wrong passwords. Wait, or reset the password. |
 | Lost phone with 2FA | Use one of the recovery codes on the code screen, or ask an admin to click **Reset 2FA** next to your name in Team. If the person is their organization's only admin, the platform admin can reset it under **Customers & usage → Users**. |
 | Platform admin lost their 2FA phone | On the server: `qivo exec qivomedia qivo-server reset-mfa you@example.com`, then sign in with your password and set 2FA up again. |
+| Single sign-on problems | See `SSO.md` → Troubleshooting. Set `QIVO_PUBLIC_URL` so the Redirect URI is right. If the provider breaks, owners and admins can still sign in with their password. |
+| "cannot decrypt" in the logs after a restore | The `secret.key` from the same backup wasn't restored. Restore it, or re-enter the SSO client secrets in Team → Single sign-on. |
 | Signed out unexpectedly | Sessions end after 12 hours without activity (`QIVO_SESSION_IDLE_HOURS`), or when someone signs out your other sessions. |

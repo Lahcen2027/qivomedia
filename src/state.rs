@@ -33,6 +33,9 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(db: SqlitePool, data_dir: PathBuf, allow_signup: bool) -> Self {
+        if let Err(e) = crate::crypto::init(&data_dir) {
+            tracing::error!("encryption key: {e}");
+        }
         Self {
             db,
             data_dir,

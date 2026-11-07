@@ -118,7 +118,7 @@ export async function securitySection(slot, users, rerenderPage) {
     </div>
     <div class="row" style="margin:20px 0 8px"><b class="grow">Your active sessions</b>${sessions.length > 1 ? `<button class="btn sm" data-others>Sign out all other sessions</button>` : ""}</div>
     <table><thead><tr><th>Device</th><th>IP address</th><th>Signed in</th><th>Last active</th><th></th></tr></thead><tbody>
-      ${sessions.map((s) => `<tr data-sid="${esc(s.id)}"><td>${esc(device(s.user_agent))}${s.current ? ` <span class="badge acc">This device</span>` : ""}${s.mfa ? ` <span class="badge" title="Signed in with two-factor authentication">2FA</span>` : ""}</td>
+      ${sessions.map((s) => `<tr data-sid="${esc(s.id)}"><td>${esc(device(s.user_agent))}${s.current ? ` <span class="badge acc">This device</span>` : ""}${s.mfa ? ` <span class="badge" title="Signed in with two-factor authentication">2FA</span>` : ""}${s.sso ? ` <span class="badge" title="Signed in with your organization account">SSO</span>` : ""}</td>
         <td class="mono">${esc(s.ip || "")}</td><td class="muted">${ago(s.created_at)}</td><td class="muted">${ago(s.last_used_at)}</td>
         <td class="t-actions">${s.current ? "" : `<button class="btn sm ghost danger" data-revoke>Sign out</button>`}</td></tr>`).join("")}
     </tbody></table>

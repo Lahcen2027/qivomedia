@@ -21,8 +21,10 @@ mod public;
 mod ratelimit;
 mod reports;
 mod content;
+mod crypto;
 mod schedules;
 mod session;
+mod sso;
 mod state;
 mod triggers;
 #[cfg(test)]
@@ -106,6 +108,7 @@ async fn main() -> anyhow::Result<()> {
     let db = SqlitePoolOptions::new().max_connections(16).connect_with(opts).await?;
     sqlx::migrate!("./migrations").run(&db).await?;
 
+    crypto::init(&data_dir)?;
     let state = AppState::new(db, data_dir.clone(), allow_signup);
 
     let app = build_app(state.clone(), &web_dir, &data_dir);
@@ -136,6 +139,7 @@ pub fn build_app(state: AppState, web_dir: &std::path::Path, data_dir: &std::pat
         .merge(ai::routes())
         .merge(alerts::routes())
         .merge(public::routes())
+        .merge(sso::routes())
         .route("/health", get(|| async { "ok" }));
 
     let files = Router::new()

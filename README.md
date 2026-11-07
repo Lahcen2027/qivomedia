@@ -43,6 +43,7 @@ Server commands: `qivo-server healthcheck` · `qivo-server backup [file]` · `qi
 - **AI layout agent** (optional, Anthropic API key): describe a screen in plain words, in French, Arabic or English, and get a real, editable layout with zones, designed slides, a clock, weather and a ticker. Ask for changes in the designer. Results are drafts until a person assigns them. Usage is metered per organization.
 - **Platform admin** for the SaaS owner: create customer organizations, set plans, screen limits and AI allowances, suspend or reactivate customers, and see usage across the platform.
 - **Security** (see [SECURITY.md](SECURITY.md)):
+  - **University single sign-on** with Microsoft 365, Google Workspace or any OpenID Connect provider: accounts created on first sign-in, roles from groups, and an option to require it. Set-up in [SSO.md](SSO.md).
   - **Two-factor authentication** with an authenticator app and recovery codes. Organizations can require it for everyone.
   - **Sessions** live in an HttpOnly, SameSite=Strict cookie that page scripts can't read, with CSRF protection, sign-out after inactivity, and a list of active sessions you can revoke.
   - **Passwords** follow NIST 800-63B and are checked against known breaches. Accounts lock after repeated failed sign-ins.

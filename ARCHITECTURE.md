@@ -103,11 +103,18 @@ CMS, web player, pairing, layouts/zones, playlists/widgets, scheduling, triggers
 - `kiosk/setup-kiosk.sh` (Debian 13, e.g. HP t430 thin clients after removing ThinPro): X11 + Openbox kiosk session with auto sign-in, Intel VA-API decoding with GStreamer GL zero-copy, PipeWire audio, Arabic fonts, polkit rule for remote restart, small logs for eMMC, unattended security updates with a 03:30 restart, optional portrait rotation.
 - CI builds the NSIS and MSI installers on Windows and the .deb and AppImage on Linux, then installs the .deb with the kiosk script on a real Debian 13 container and starts the player there.
 
+**Phase 1.12 — built (v0.9): university single sign-on**
+- OpenID Connect sign-in with Microsoft Entra ID (Microsoft 365), Google Workspace or any OIDC provider, configured per organization (Team → Single sign-on). Set-up guide in `SSO.md`.
+- Authorization code + PKCE, a browser-bound single-use state, a nonce, and ID tokens verified against JWKS. Microsoft is matched by UPN (no "nOAuth" takeover), and Google must match the Workspace `hd` domain.
+- The login page finds the provider from the email domain. Accounts are created on first sign-in (or invited-only), and roles come from Entra or OIDC groups (highest match wins, owner never changed).
+- "Require SSO" policy with a password emergency way in for owners and admins. Client secrets are encrypted with AES-256-GCM (`secret.key` / `QIVO_SECRET_KEY`, included in backups).
+- Tests: a fake OIDC provider inside the test suite (full flow, forged, expired, wrong-audience, wrong-nonce and replayed tokens, other domain, other organization), plus a browser run against an RS256 provider on a different site.
+
 **Phase 2 — Production hardening (next 4–6 weeks)**
 - Postgres backend + S3/R2 media storage + signed URLs; Redis or Postgres LISTEN/NOTIFY so several server instances share the event bus
 - Per-screen timezone; holiday/exception dates; campaigns (ordered layout sets) and share-of-voice
 - Uptime history, offline alerts (email/Slack/WhatsApp). Screenshots from Windows players were built in v0.8.
-- Passkeys (WebAuthn) for passwordless, phishing-resistant sign-in; university SSO (see section 5); encrypt TOTP secrets at rest
+- Passkeys (WebAuthn) for passwordless, phishing-resistant sign-in; SAML 2.0 for universities without OpenID Connect; encrypt TOTP secrets at rest (same key as SSO secrets)
 - Server-side thumbnails + video transcoding (ffmpeg) and image resizing per screen resolution
 - Browser end-to-end tests (Playwright) in CI
 
@@ -136,7 +143,7 @@ CMS, web player, pairing, layouts/zones, playlists/widgets, scheduling, triggers
 Campuses run hundreds of screens across faculties, libraries, cafeterias and residences, managed by many departments, and their IT teams often prefer self-hosting (Docker fits). Typical buying path: tender or pilot of 10–20 screens in one faculty, then campus-wide rollout.
 
 **Priority 1 — needed to win the deal**
-1. **University login (SSO):** SAML 2.0 / OpenID Connect with Microsoft 365 (Azure AD / Entra ID) and Google Workspace; auto-create users on first login; map IdP groups to roles. Often a hard requirement from university IT.
+1. **University login (SSO) — OpenID Connect built in v0.9 (SAML 2.0 still to do):** SAML 2.0 / OpenID Connect with Microsoft 365 (Azure AD / Entra ID) and Google Workspace; auto-create users on first login; map IdP groups to roles. Often a hard requirement from university IT.
 2. **Emergency alerts (built in v0.3):** one-click campus-wide or building-level takeover within seconds (fire, lockdown, weather), highest priority above all schedules, stays until cleared. Accept the standard alert format **CAP (Common Alerting Protocol)** so campus emergency systems can trigger it directly. Builds on existing webhook triggers. Audit-logged; tested periodically.
 3. **Approval workflow:** departments, clubs and students submit content; communications approves before it goes live. Draft → pending → approved/rejected, with comments and email notification. Same mechanism as the AI drafts-first feature.
 
