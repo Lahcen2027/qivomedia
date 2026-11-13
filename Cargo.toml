@@ -30,7 +30,7 @@ totp-rs = { version = "5", features = ["otpauth", "gen_secret", "qr"] }
 infer = "0.19"
 sha1_smol = "1"
 cookie = "0.18"
-base64 = "0.22"
+base64 = "0.23"
 ring = "0.17"
 jsonwebtoken = "9.3"
 
