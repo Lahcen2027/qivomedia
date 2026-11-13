@@ -32,7 +32,7 @@ sha1_smol = "1"
 cookie = "0.18"
 base64 = "0.22"
 ring = "0.17"
-jsonwebtoken = "9.3"
+jsonwebtoken = "11.1"
 
 [profile.release]
 lto = "thin"
