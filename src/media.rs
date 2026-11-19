@@ -29,6 +29,12 @@ pub struct Media {
     pub duration_ms: Option<i64>,
     pub tags: String,
     pub created_at: String,
+    pub status: String,
+    pub progress: i64,
+    pub error: Option<String>,
+    pub pages: Option<String>,
+    pub width: Option<i64>,
+    pub height: Option<i64>,
 }
 
 impl Media {
@@ -39,11 +45,21 @@ impl Media {
             "duration_ms": self.duration_ms,
             "tags": serde_json::from_str::<Value>(&self.tags).unwrap_or(json!([])),
             "created_at": self.created_at,
+            "status": self.status, "progress": self.progress, "error": self.error,
+            "width": self.width, "height": self.height,
+            // PDF: one image per page, played as a slideshow.
+            "pages": self.page_files().iter().map(|f| format!("/files/{f}")).collect::<Vec<_>>(),
         })
     }
 }
 
-pub const MEDIA_COLS: &str = "id, name, kind, mime, size, sha256, file_name, duration_ms, tags, created_at";
+pub const MEDIA_COLS: &str = "id, name, kind, mime, size, sha256, file_name, duration_ms, tags, created_at, status, progress, error, pages, width, height";
+
+impl Media {
+    pub fn page_files(&self) -> Vec<String> {
+        self.pages.as_deref().and_then(|p| serde_json::from_str(p).ok()).unwrap_or_default()
+    }
+}
 
 pub fn routes() -> Router<AppState> {
     Router::new()
@@ -131,6 +147,64 @@ async fn upload(State(state): State<AppState>, user: AuthUser, mut mp: Multipart
             }
         };
         let sha = hex::encode(hasher.finalize());
+        // Will every screen be able to play it as it is? Otherwise convert it in the background.
+        let mut probed: Option<crate::mediaproc::Probe> = None;
+        let convert: Option<&'static str> = if mime == "application/pdf" {
+            Some("pdf")
+        } else if mime == "image/tiff" {
+            Some("image")
+        } else if mime.starts_with("video/") || mime.starts_with("audio/") {
+            let Some(demuxer) = crate::mediaproc::demuxer_for(&mime) else {
+                let _ = tokio::fs::remove_file(&tmp).await;
+                return Err(AppError::BadRequest(format!("{orig}: this video/audio format ({mime}) isn't supported")));
+            };
+            match crate::mediaproc::probe(&tmp, demuxer).await {
+                Ok(p) => {
+                    let plan = crate::mediaproc::plan_for(&mime, &p);
+                    probed = Some(p);
+                    match plan {
+                        crate::mediaproc::Plan::Ready => None,
+                        crate::mediaproc::Plan::Convert(k) => Some(k),
+                    }
+                }
+                Err(e) => {
+                    let _ = tokio::fs::remove_file(&tmp).await;
+                    return Err(AppError::BadRequest(format!("{orig}: {e}")));
+                }
+            }
+        } else {
+            None
+        };
+        if let Some(target_kind) = convert {
+            let id = new_id();
+            let src_dir = state.data_dir.join("media-src");
+            tokio::fs::create_dir_all(&src_dir).await?;
+            let src_name = format!("{id}{}", safe_ext(&orig));
+            tokio::fs::rename(&tmp, src_dir.join(&src_name)).await?;
+            sqlx::query(
+                "INSERT INTO media (id, org_id, name, kind, mime, size, sha256, file_name, duration_ms, created_at, status, progress, source_file, width, height)
+                 VALUES (?,?,?,?,?,?,?,'',?,?,'processing',0,?,?,?)",
+            )
+            .bind(&id)
+            .bind(user.org())
+            .bind(&orig)
+            .bind(target_kind)
+            .bind(&mime)
+            .bind(size as i64)
+            .bind(&sha)
+            .bind(duration_ms.or(probed.as_ref().and_then(|p| p.duration_ms)))
+            .bind(now())
+            .bind(&src_name)
+            .bind(probed.as_ref().and_then(|p| p.width))
+            .bind(probed.as_ref().and_then(|p| p.height))
+            .execute(&state.db)
+            .await?;
+            audit(&state, user.org(), Some(&user.0.id), "media.uploaded", &format!("{orig} (converting)")).await;
+            crate::mediaproc::enqueue(&state, &id);
+            let m = sqlx::query_as::<_, Media>(&format!("SELECT {MEDIA_COLS} FROM media WHERE id = ?")).bind(&id).fetch_one(&state.db).await?;
+            created.push(m.to_json());
+            continue;
+        }
         let file_name = format!("{sha}{}", safe_ext(&orig));
         let dest = state.data_dir.join("media").join(&file_name);
         if tokio::fs::try_exists(&dest).await.unwrap_or(false) {
@@ -141,8 +215,8 @@ async fn upload(State(state): State<AppState>, user: AuthUser, mut mp: Multipart
 
         let id = new_id();
         sqlx::query(
-            "INSERT INTO media (id, org_id, name, kind, mime, size, sha256, file_name, duration_ms, created_at)
-             VALUES (?,?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO media (id, org_id, name, kind, mime, size, sha256, file_name, duration_ms, created_at, width, height)
+             VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
         )
         .bind(&id)
         .bind(user.org())
@@ -152,8 +226,10 @@ async fn upload(State(state): State<AppState>, user: AuthUser, mut mp: Multipart
         .bind(size as i64)
         .bind(&sha)
         .bind(&file_name)
-        .bind(duration_ms)
+        .bind(duration_ms.or(probed.as_ref().and_then(|p| p.duration_ms)))
         .bind(now())
+        .bind(probed.as_ref().and_then(|p| p.width))
+        .bind(probed.as_ref().and_then(|p| p.height))
         .execute(&state.db)
         .await?;
         audit(&state, user.org(), Some(&user.0.id), "media.uploaded", &orig).await;
@@ -223,13 +299,23 @@ async fn remove(State(state): State<AppState>, user: AuthUser, Path(id): Path<St
     if in_use > 0 {
         return Err(AppError::Conflict(format!("media is used in {in_use} playlist(s); remove it there first")));
     }
+    let source: Option<String> = sqlx::query_scalar("SELECT source_file FROM media WHERE id = ?").bind(&id).fetch_one(&state.db).await?;
     sqlx::query("DELETE FROM media WHERE id = ?").bind(&id).execute(&state.db).await?;
-    let still_referenced: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM media WHERE file_name = ?")
-        .bind(&m.file_name)
-        .fetch_one(&state.db)
-        .await?;
-    if still_referenced == 0 {
-        let _ = tokio::fs::remove_file(state.data_dir.join("media").join(&m.file_name)).await;
+    if let Some(src) = source {
+        // Still converting: the job sees the media is gone and drops its result.
+        let _ = tokio::fs::remove_file(state.data_dir.join("media-src").join(src)).await;
+    }
+    let mut files = m.page_files();
+    files.push(m.file_name.clone());
+    for f in files.into_iter().filter(|f| !f.is_empty()) {
+        let still_referenced: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM media WHERE file_name = ? OR pages LIKE ?")
+            .bind(&f)
+            .bind(format!("%\"{f}\"%"))
+            .fetch_one(&state.db)
+            .await?;
+        if still_referenced == 0 {
+            let _ = tokio::fs::remove_file(state.data_dir.join("media").join(&f)).await;
+        }
     }
     audit(&state, user.org(), Some(&user.0.id), "media.deleted", &m.name).await;
     Ok(Json(json!({ "ok": true })))
@@ -252,6 +338,10 @@ pub fn sniff(head: &[u8], claimed: &str, name: &str) -> AppResult<String> {
             return Err(AppError::BadRequest("the file's content doesn't match its type".into()));
         }
         return Ok(m.to_string());
+    }
+    // MPEG transport stream (.ts, .m2ts): a 0x47 sync byte every 188 bytes.
+    if head.len() >= 377 && head[0] == 0x47 && head[188] == 0x47 && head[376] == 0x47 {
+        return Ok("video/mp2t".into());
     }
     // Not a known binary: only text formats we support (HTML, SVG) are allowed.
     let text = !head.contains(&0) && std::str::from_utf8(&head[..head.len().saturating_sub(4)]).is_ok();

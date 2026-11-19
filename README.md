@@ -49,6 +49,8 @@ Server commands: `qivo-server healthcheck` · `qivo-server backup [file]` · `qi
   - **Passwords** follow NIST 800-63B and are checked against known breaches. Accounts lock after repeated failed sign-ins.
   - **Browser and file protections:** a strict Content Security Policy, sandboxed uploaded HTML and SVG, uploads identified by their content, and modern security headers.
   - **Infrastructure:** read-only, unprivileged containers. CI checks dependencies with cargo-audit and the image with Trivy, and produces an SBOM. Dependabot keeps dependencies up to date.
+- **Every format, converted automatically**: JPEG, PNG, GIF, H.264, MP3 play as they are, while AVI, MPEG-2, VOB, MPEG-TS, WMV and HEVC are converted to H.264 (deinterlaced where needed) and PDFs become page-by-page slides. See [MEDIA.md](MEDIA.md).
+- **Live streams**: IP cameras (RTSP), IPTV multicast (UDP), SRT/RTMP encoders and HLS channels in any zone, relayed on demand by the server, converted live when needed, and reconnecting by themselves.
 - **Proof of play**: the device records every play, even offline, and syncs it later. Reports break plays down by day, content and screen, and export to CSV.
 
 ## Tests

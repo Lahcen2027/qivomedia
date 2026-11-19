@@ -98,6 +98,81 @@ async function flushPop() {
   } catch { /* offline: keep queue */ }
 }
 
+// ---------------- PDF pages and live streams ----------------
+/** Seconds each PDF page stays on screen. */
+const pageSeconds = (item) => Math.max(2, Number(item.page_duration) || 8);
+
+/** A converted PDF: its pages one after another, each decoded before it is shown. */
+function pdfSlides(m, item) {
+  const box = el("div", "pdf-slides");
+  const imgs = m.pages.map((src) => { const i = el("img", `fit-${item.fit || "contain"}`); i.alt = ""; i.src = src; i.style.opacity = "0"; box.appendChild(i); return i; });
+  let i = 0;
+  imgs[0].style.opacity = "1";
+  const ready = imgs[0].decode ? imgs[0].decode().catch(() => {}) : Promise.resolve();
+  let timer = null;
+  const ended = new Promise((done) => {
+    const step = () => {
+      if (i + 1 >= imgs.length) return done();
+      imgs[i].style.opacity = "0"; i += 1; imgs[i].style.opacity = "1";
+      timer = setTimeout(step, pageSeconds(item) * 1000);
+    };
+    timer = setTimeout(step, pageSeconds(item) * 1000);
+  });
+  return { node: box, ready, ended, cleanup: () => clearTimeout(timer) };
+}
+
+let hlsLoading = null;
+/** hls.js is only downloaded by screens that actually show a live stream. */
+function loadHls() {
+  if (window.Hls) return Promise.resolve(window.Hls);
+  hlsLoading ||= new Promise((res, rej) => {
+    const s = document.createElement("script");
+    s.src = "/player/vendor/hls.light.min.js"; s.onload = () => res(window.Hls); s.onerror = rej;
+    document.head.appendChild(s);
+  });
+  return hlsLoading;
+}
+
+/** IP camera, encoder or IPTV channel (HLS). Reconnects by itself when the stream drops. */
+function liveStream(item) {
+  const s = manifest.media?.[item.stream_id];
+  if (!s?.url) return null;
+  const v = el("video", `fit-${item.fit || "contain"}`);
+  v.muted = item.mute !== false; v.playsInline = true; v.autoplay = true;
+  const ready = new Promise((res) => { v.addEventListener("playing", res, { once: true }); setTimeout(res, 15000); });
+  let hls = null, dead = false, retry = null;
+  const play = () => v.play().catch(() => { v.muted = true; v.play().catch(() => {}); });
+  const start = async () => {
+    if (dead) return;
+    const isHls = /\.m3u8(\?|$)/i.test(s.url);
+    if (isHls && !(window.MediaSource || window.ManagedMediaSource) && v.canPlayType("application/vnd.apple.mpegurl")) {
+      v.src = s.url; play(); return; // native HLS (no MediaSource)
+    }
+    if (!isHls) { v.src = s.url; play(); return; }
+    try {
+      const Hls = await loadHls();
+      hls = new Hls({ enableWorker: false, liveSyncDurationCount: 2, liveMaxLatencyDurationCount: 6, maxBufferLength: 10, backBufferLength: 10,
+        manifestLoadPolicy: { default: { maxTimeToFirstByteMs: 25000, maxLoadTimeMs: 30000, timeoutRetry: { maxNumRetry: 6, retryDelayMs: 2000, maxRetryDelayMs: 8000 }, errorRetry: { maxNumRetry: 6, retryDelayMs: 2000, maxRetryDelayMs: 8000 } } } });
+      hls.on(Hls.Events.ERROR, (_, d) => {
+        if (!d.fatal) return;
+        if (d.type === Hls.ErrorTypes.MEDIA_ERROR) { hls.recoverMediaError(); return; }
+        // Network gone or the camera restarted: start over in a few seconds.
+        hls.destroy(); hls = null; clearTimeout(retry); retry = setTimeout(start, 5000);
+      });
+      hls.loadSource(s.url); hls.attachMedia(v); play();
+    } catch { clearTimeout(retry); retry = setTimeout(start, 10000); }
+  };
+  // A live picture that stops moving for 20 s is restarted.
+  let lastT = -1, stuck = 0;
+  const watchdog = setInterval(() => {
+    if (v.currentTime === lastT && !v.paused) stuck += 5; else stuck = 0;
+    lastT = v.currentTime;
+    if (stuck >= 20) { stuck = 0; hls?.destroy(); hls = null; v.removeAttribute("src"); start(); }
+  }, 5000);
+  start();
+  return { node: v, ready, cleanup: () => { dead = true; clearTimeout(retry); clearInterval(watchdog); hls?.destroy(); } };
+}
+
 // ---------------- widgets ----------------
 function renderItem(item, ctx) {
   const t = item.type;
@@ -121,6 +196,7 @@ function renderItem(item, ctx) {
       v.play().catch(() => { v.muted = true; v.play().catch(() => {}); });
       return { node: v, ended: item.play_full !== false ? ended : null, ready };
     }
+    if (m.kind === "pdf" && m.pages?.length) return pdfSlides(m, item);
     if (m.kind === "pdf" || m.kind === "html") {
       const f = el("iframe"); f.src = m.url; return { node: f };
     }
@@ -131,6 +207,7 @@ function renderItem(item, ctx) {
     }
     return null;
   }
+  if (t === "stream") return liveStream(item);
   const color = item.color || "#ffffff";
   const bg = item.bg || "transparent";
   const size = item.size || 64;
@@ -239,6 +316,7 @@ class RegionPlayer {
       if (it.type === "media" && manifest.media?.[it.media_id]?.kind === "video" && it.play_full !== false) {
         return s + (manifest.media[it.media_id].duration_ms ? manifest.media[it.media_id].duration_ms / 1000 : it.duration);
       }
+      if (it.type === "media" && manifest.media?.[it.media_id]?.pages?.length) return s + manifest.media[it.media_id].pages.length * pageSeconds(it);
       return s + it.duration;
     }, 0);
   }
@@ -259,7 +337,9 @@ class RegionPlayer {
   async next() {
     if (!this.alive) return;
     this.endPop();
-    const playable = this.items.filter((it) => itemPlayable(it));
+    // Media still converting (or a deleted stream) isn't in the manifest yet: skip it for now.
+    const playable = this.items.filter((it) => itemPlayable(it)
+      && (it.type !== "media" || manifest.media?.[it.media_id]) && (it.type !== "stream" || manifest.media?.[it.stream_id]));
     if (!playable.length) { this.swap(null); this.timer = setTimeout(() => this.next(), 15000); return; }
     if (this.shuffle && (!this.order || this.idx + 1 >= this.order.length)) {
       this.order = [...playable].sort(() => Math.random() - 0.5); this.idx = -1;
@@ -303,7 +383,7 @@ class RegionPlayer {
     slot.style.opacity = "0";
     slot.appendChild(r.node);
     this.node.appendChild(slot);
-    const cleanup = () => { if (r.timer) clearInterval(r.timer); const v = slot.querySelector("video,audio"); if (v) { v.pause(); v.removeAttribute("src"); v.load(); } };
+    const cleanup = () => { if (r.timer) clearInterval(r.timer); r.cleanup?.(); const v = slot.querySelector("video,audio"); if (v) { v.pause(); v.removeAttribute("src"); v.load(); } };
     if (r.ready) await Promise.race([r.ready, sleep(2500)]); // never wait forever on a broken file
     if (!this.alive) { cleanup(); slot.remove(); return; }
     slot.style.opacity = "";

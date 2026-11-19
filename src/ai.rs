@@ -332,7 +332,7 @@ async fn generate(State(state): State<AppState>, user: AuthUser, Json(req): Json
     }
 
     let media: Vec<Media> = if req.use_media {
-        sqlx::query_as(&format!("SELECT {MEDIA_COLS} FROM media WHERE org_id = ? AND kind IN ('image','video') ORDER BY created_at DESC LIMIT 150"))
+        sqlx::query_as(&format!("SELECT {MEDIA_COLS} FROM media WHERE org_id = ? AND kind IN ('image','video') AND status = 'ready' ORDER BY created_at DESC LIMIT 150"))
             .bind(&org)
             .fetch_all(&state.db)
             .await?

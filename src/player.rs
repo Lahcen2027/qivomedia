@@ -130,6 +130,7 @@ async fn load_bundle(state: &AppState, org: &str, layout_ids: &BTreeSet<String>)
     }
     let mut playlists = BTreeMap::new();
     let mut media_ids = BTreeSet::new();
+    let mut stream_ids = BTreeSet::new();
     for pid in &playlist_ids {
         let p: Option<Playlist> = sqlx::query_as("SELECT id, name, items, shuffle, updated_at FROM playlists WHERE id = ? AND org_id = ?")
             .bind(pid)
@@ -142,13 +143,16 @@ async fn load_bundle(state: &AppState, org: &str, layout_ids: &BTreeSet<String>)
                 if let Some(m) = it["media_id"].as_str() {
                     media_ids.insert(m.to_string());
                 }
+                if let Some(s) = it["stream_id"].as_str() {
+                    stream_ids.insert(s.to_string());
+                }
             }
             playlists.insert(pid.clone(), j);
         }
     }
     let mut media = BTreeMap::new();
     for mid in &media_ids {
-        let m: Option<Media> = sqlx::query_as(&format!("SELECT {MEDIA_COLS} FROM media WHERE id = ? AND org_id = ?"))
+        let m: Option<Media> = sqlx::query_as(&format!("SELECT {MEDIA_COLS} FROM media WHERE id = ? AND org_id = ? AND status = 'ready'"))
             .bind(mid)
             .bind(org)
             .fetch_optional(&state.db)
@@ -156,6 +160,11 @@ async fn load_bundle(state: &AppState, org: &str, layout_ids: &BTreeSet<String>)
         if let Some(m) = m {
             media.insert(mid.clone(), m.to_json());
         }
+    }
+    // Live streams travel in the same map (kind "stream"), keyed by their own ids.
+    let sids: Vec<String> = stream_ids.into_iter().collect();
+    for (id, entry) in crate::live::manifest_entries(state, org, &sids).await? {
+        media.insert(id, entry);
     }
     Ok((json!(layouts), json!(playlists), json!(media)))
 }

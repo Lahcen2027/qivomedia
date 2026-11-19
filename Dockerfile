@@ -10,7 +10,8 @@ RUN touch src/main.rs && cargo build --release
 
 # ---- runtime ----
 FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tzdata \
+# ffmpeg: converts AVI/MPEG-2/VOB/WMV/HEVC… to H.264 and relays IP cameras; poppler-utils: PDF → page images.
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tzdata ffmpeg poppler-utils \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --system --uid 10001 --home /data qivo \
  && mkdir -p /data && chown qivo:qivo /data

@@ -12,7 +12,9 @@ mod error;
 mod headers;
 mod hub;
 mod mail;
+mod live;
 mod media;
+mod mediaproc;
 mod mfa;
 mod passwords;
 mod platform;
@@ -94,6 +96,9 @@ async fn main() -> anyhow::Result<()> {
     std::fs::create_dir_all(data_dir.join("media"))?;
     std::fs::create_dir_all(data_dir.join("tmp"))?;
     std::fs::create_dir_all(data_dir.join("screenshots"))?;
+    std::fs::create_dir_all(data_dir.join("media-src"))?;
+    // Live relay segments are temporary: start clean.
+    let _ = std::fs::remove_dir_all(data_dir.join("live"));
 
     let db_url = std::env::var("DATABASE_URL")
         .unwrap_or_else(|_| format!("sqlite://{}", data_dir.join("qivo.db").display()));
@@ -114,6 +119,7 @@ async fn main() -> anyhow::Result<()> {
     let app = build_app(state.clone(), &web_dir, &data_dir);
 
     tokio::spawn(hub::presence_sweeper(state.clone()));
+    mediaproc::resume(&state).await;
     let flush_state = state.clone();
 
     let addr = SocketAddr::from_str(&bind)?;
@@ -140,6 +146,7 @@ pub fn build_app(state: AppState, web_dir: &std::path::Path, data_dir: &std::pat
         .merge(alerts::routes())
         .merge(public::routes())
         .merge(sso::routes())
+        .merge(live::routes())
         .route("/health", get(|| async { "ok" }));
 
     let files = Router::new()

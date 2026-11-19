@@ -15,7 +15,7 @@ use crate::{
     util::{new_id, now, valid_hhmm},
 };
 
-pub const ITEM_TYPES: &[&str] = &["media", "text", "ticker", "clock", "weather", "webpage", "html", "countdown"];
+pub const ITEM_TYPES: &[&str] = &["media", "text", "ticker", "clock", "weather", "webpage", "html", "countdown", "stream"];
 pub const TRANSITIONS: &[&str] = &["none", "fade", "slide", "zoom"];
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
@@ -107,6 +107,13 @@ pub(crate) async fn normalize_items(state: &AppState, org: &str, items: &[Value]
                 .await?;
             if ok == 0 {
                 return Err(AppError::BadRequest(format!("item {i}: media not found")));
+            }
+        }
+        if ty == "stream" {
+            let sid = it.get("stream_id").and_then(Value::as_str).unwrap_or("");
+            let ok: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM streams WHERE id = ? AND org_id = ?").bind(sid).bind(org).fetch_one(&state.db).await?;
+            if ok == 0 {
+                return Err(AppError::BadRequest(format!("item {i}: live stream not found")));
             }
         }
         if ty == "webpage" {

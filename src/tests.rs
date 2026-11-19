@@ -19,7 +19,7 @@ struct T {
     app: Router,
     ip: String,
     db: sqlx::SqlitePool,
-    _dir: std::path::PathBuf,
+    dir: std::path::PathBuf,
 }
 
 async fn setup(ip: &str) -> T {
@@ -36,7 +36,7 @@ async fn setup(ip: &str) -> T {
     sqlx::migrate!("./migrations").run(&db).await.unwrap();
     let web = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("web");
     let app = build_app(AppState::new(db.clone(), dir.clone(), false), &web, &dir);
-    T { app, ip: ip.into(), db, _dir: dir }
+    T { app, ip: ip.into(), db, dir }
 }
 
 impl T {
@@ -875,5 +875,157 @@ mod sso_flow {
         t.req("POST", "/api/users", Some(&owner), Some(json!({ "email": "ed@univ.ma", "name": "Editor Person", "role": "editor", "password": "violet-canyon-42" }))).await;
         let ed = t.login_token("ed@univ.ma", "violet-canyon-42").await;
         assert_eq!(t.req("GET", "/api/sso/providers", Some(&ed), None).await.0, StatusCode::FORBIDDEN);
+    }
+}
+
+/// Media conversion and live relays with the real ffmpeg (skipped where it isn't installed).
+mod media_and_live {
+    use super::*;
+
+    fn have(cmd: &str) -> bool {
+        std::process::Command::new(cmd).arg("-version").output().map(|o| o.status.success()).unwrap_or(false)
+    }
+
+    async fn upload(t: &T, tok: &str, name: &str, bytes: Vec<u8>) -> (StatusCode, Value) {
+        let bd = "XQIVOBOUNDARY";
+        let mut body = format!("--{bd}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{name}\"\r\nContent-Type: application/octet-stream\r\n\r\n").into_bytes();
+        body.extend(bytes);
+        body.extend(format!("\r\n--{bd}--\r\n").into_bytes());
+        let res = t.app.clone().oneshot(Request::builder().method("POST").uri("/api/media").header("host", "qivo.test").header("origin", "https://qivo.test")
+            .header("cookie", format!("qivo_session={tok}")).header("content-type", format!("multipart/form-data; boundary={bd}"))
+            .body(Body::from(body)).unwrap()).await.unwrap();
+        let s = res.status();
+        (s, serde_json::from_slice(&res.into_body().collect().await.unwrap().to_bytes()).unwrap_or(Value::Null))
+    }
+
+    async fn wait_for(t: &T, tok: &str, id: &str) -> Value {
+        for _ in 0..240 {
+            let list = t.req("GET", "/api/media", Some(tok), None).await.1;
+            let m = list.as_array().unwrap().iter().find(|m| m["id"] == id).cloned().unwrap();
+            if m["status"] != "processing" {
+                return m;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
+        panic!("conversion did not finish");
+    }
+
+    /// A paired screen whose layout plays `items`; returns its device key.
+    async fn screen_with(t: &T, owner: &str, items: Value) -> String {
+        let (_, reg) = t.req("POST", "/api/player/register", None, Some(json!({}))).await;
+        let key = reg["device_key"].as_str().unwrap().to_string();
+        t.req("POST", "/api/displays/claim", Some(owner), Some(json!({ "code": reg["pairing_code"], "name": "Hall" }))).await;
+        let (s, pl) = t.req("POST", "/api/playlists", Some(owner), Some(json!({ "name": "P", "items": items }))).await;
+        assert_eq!(s, StatusCode::OK, "{pl}");
+        let (_, l) = t.req("POST", "/api/layouts", Some(owner), Some(json!({ "name": "L", "regions": [{ "x": 0, "y": 0, "w": 100, "h": 100, "playlist_id": pl["id"] }] }))).await;
+        let did = t.req("GET", "/api/displays", Some(owner), None).await.1.as_array().unwrap().last().unwrap()["id"].as_str().unwrap().to_string();
+        t.req("PATCH", &format!("/api/displays/{did}"), Some(owner), Some(json!({ "default_layout_id": l["id"] }))).await;
+        key
+    }
+
+    #[tokio::test]
+    async fn avi_is_converted_and_reaches_screens_only_when_ready() {
+        if !have("ffmpeg") || !have("ffprobe") {
+            eprintln!("ffmpeg not installed: skipping");
+            return;
+        }
+        let t = setup("10.2.0.1").await;
+        let (owner, _) = t.signup("conv@test.ma").await;
+        let dir = std::env::temp_dir().join(format!("qivo-conv-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let avi = dir.join("old.avi");
+        let ok = std::process::Command::new("ffmpeg").args(["-v", "error", "-f", "lavfi", "-i", "testsrc=size=320x240:rate=25", "-f", "lavfi", "-i", "sine", "-t", "2", "-c:v", "mpeg4", "-c:a", "libmp3lame"])
+            .arg(&avi).status().unwrap();
+        assert!(ok.success());
+        let (s, v) = upload(&t, &owner, "old.avi", std::fs::read(&avi).unwrap()).await;
+        assert_eq!(s, StatusCode::OK, "{v}");
+        assert_eq!(v[0]["status"], "processing");
+        let id = v[0]["id"].as_str().unwrap().to_string();
+
+        // Something still converting is never sent to screens.
+        sqlx::query("INSERT INTO media (id, org_id, name, kind, mime, size, sha256, file_name, created_at, status, progress) SELECT 'm-wip', org_id, 'wip.vob', 'video', 'video/mpeg', 1, 'x', '', 'now', 'processing', 10 FROM users WHERE email = 'conv@test.ma'")
+            .execute(&t.db).await.unwrap();
+        let key = screen_with(&t, &owner, json!([{ "type": "media", "media_id": "m-wip" }, { "type": "media", "media_id": id }])).await;
+
+        let m = wait_for(&t, &owner, &id).await;
+        assert_eq!(m["status"], "ready", "{m}");
+        assert_eq!(m["mime"], "video/mp4");
+        assert!(m["duration_ms"].as_i64().unwrap() >= 1900);
+        let manifest = t.req_h("GET", "/api/player/manifest", None, None, &[("x-device-key", &key)]).await.1;
+        assert_eq!(manifest["media"][&id]["mime"], "video/mp4", "converted video reaches the screen");
+        assert!(manifest["media"].get("m-wip").is_none(), "unfinished conversion is held back");
+        let file = t.dir.join("media").join(m["url"].as_str().unwrap().trim_start_matches("/files/"));
+        let probe = std::process::Command::new("ffprobe").args(["-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_name", "-of", "csv=p=0"]).arg(&file).output().unwrap();
+        assert_eq!(String::from_utf8_lossy(&probe.stdout).trim(), "h264");
+        assert_eq!(std::fs::read_dir(t.dir.join("media-src")).unwrap().count(), 0, "original removed after conversion");
+    }
+
+    #[tokio::test]
+    async fn pdf_becomes_one_image_per_page() {
+        if !have("pdftoppm") {
+            eprintln!("pdftoppm not installed: skipping");
+            return;
+        }
+        let t = setup("10.2.0.2").await;
+        let (owner, _) = t.signup("pdf@test.ma").await;
+        // A minimal two-page PDF.
+        let pdf = b"%PDF-1.4\n1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n2 0 obj<</Type/Pages/Kids[3 0 R 4 0 R]/Count 2>>endobj\n\
+3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 595 842]>>endobj\n4 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 595 842]>>endobj\n\
+trailer<</Root 1 0 R>>\n%%EOF\n".to_vec();
+        let (s, v) = upload(&t, &owner, "notice.pdf", pdf).await;
+        assert_eq!(s, StatusCode::OK, "{v}");
+        let m = wait_for(&t, &owner, v[0]["id"].as_str().unwrap()).await;
+        assert_eq!(m["status"], "ready", "{m}");
+        assert_eq!(m["pages"].as_array().unwrap().len(), 2);
+        assert_eq!(m["height"].as_i64(), Some(3840), "long side rendered at 4K");
+        // Deleting it removes the page images too.
+        let page = t.dir.join("media").join(m["pages"][1].as_str().unwrap().trim_start_matches("/files/"));
+        assert!(page.exists());
+        assert_eq!(t.req("DELETE", &format!("/api/media/{}", m["id"].as_str().unwrap()), Some(&owner), None).await.0, StatusCode::OK);
+        assert!(!page.exists());
+    }
+
+    #[tokio::test]
+    async fn camera_is_relayed_as_hls_behind_an_unguessable_address() {
+        if !have("ffmpeg") {
+            eprintln!("ffmpeg not installed: skipping");
+            return;
+        }
+        std::env::set_var("QIVO_STREAM_ALLOW_LOOPBACK", "1");
+        let t = setup("10.2.0.3").await;
+        let (owner, _) = t.signup("live@test.ma").await;
+        // A fake IPTV channel: MPEG-2 over UDP (converted to H.264 by the relay).
+        let port = std::net::UdpSocket::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let _cam = tokio::process::Command::new("ffmpeg")
+            .args(["-v", "error", "-re", "-f", "lavfi", "-i", "testsrc=size=320x240:rate=25", "-c:v", "mpeg2video", "-f", "mpegts", &format!("udp://127.0.0.1:{port}?pkt_size=1316")])
+            .kill_on_drop(true).spawn().unwrap();
+
+        let (s, v) = t.req("POST", "/api/streams", Some(&owner), Some(json!({ "name": "TV", "source": format!("udp://127.0.0.1:{port}") }))).await;
+        assert_eq!(s, StatusCode::OK, "{v}");
+        let sid = v["id"].as_str().unwrap().to_string();
+        assert_eq!(t.req("POST", "/api/streams", Some(&owner), Some(json!({ "name": "x", "source": "file:///etc/passwd" }))).await.0, StatusCode::BAD_REQUEST);
+        let key = screen_with(&t, &owner, json!([{ "type": "stream", "stream_id": sid, "duration": 60 }])).await;
+        let manifest = t.req_h("GET", "/api/player/manifest", None, None, &[("x-device-key", &key)]).await.1;
+        let url = manifest["media"][&sid]["url"].as_str().unwrap().to_string();
+        assert!(url.starts_with(&format!("/api/live/{sid}/")) && url.ends_with("/index.m3u8"), "{url}");
+
+        let get = |u: String| { let app = t.app.clone(); async move {
+            let r = app.oneshot(Request::builder().uri(u).header("host", "qivo.test").body(Body::empty()).unwrap()).await.unwrap();
+            let s = r.status();
+            (s, String::from_utf8_lossy(&r.into_body().collect().await.unwrap().to_bytes()).to_string())
+        } };
+        let (s, playlist) = get(url.clone()).await;
+        assert_eq!(s, StatusCode::OK, "{playlist}");
+        assert!(playlist.contains("#EXTM3U"));
+        let seg = playlist.lines().find(|l| l.ends_with(".ts")).unwrap().to_string();
+        assert_eq!(get(url.replace("index.m3u8", &seg)).await.0, StatusCode::OK);
+        // Guessing doesn't work.
+        let wrong = url.split('/').enumerate().map(|(i, p)| if i == 4 { "0".repeat(32) } else { p.to_string() }).collect::<Vec<_>>().join("/");
+        assert_eq!(get(wrong).await.0, StatusCode::NOT_FOUND);
+        let (s, body) = get(url.replace("index.m3u8", "../../../qivo.db")).await;
+        let _ = s; // the dashboard's start page answers unknown addresses; files are never reachable
+        assert!(!body.starts_with("SQLite format"), "never the database");
+        // In use: can't be deleted from under the screens.
+        assert_eq!(t.req("DELETE", &format!("/api/streams/{sid}"), Some(&owner), None).await.0, StatusCode::CONFLICT);
     }
 }

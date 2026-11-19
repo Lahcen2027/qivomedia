@@ -14,6 +14,7 @@ Build a digital signage platform that does what Xibo does and goes further in th
 | Scheduling | Events, day-parting, priorities, campaigns | Date range, weekdays, daily window (overnight), priorities, rotation, per-item day-parting, **visual week timeline** | Campaigns, share-of-voice, timezone per screen, exceptions/holidays |
 | Interrupts | Interrupt layouts, action triggers | **Webhook triggers with JSON data → `{{placeholders}}`** | Rules engine (if sensor/API value → layout), IFTTT/Zapier/MQTT |
 | Multi-tenancy | Single-tenant CMS with folders/permissions | **Organizations built in**, roles, audit log | Reseller → client hierarchy, white-label, billing |
+| Media & live video | Many formats, depending on the player; RTSP on some players | **Every common format converted server-side**; RTSP/UDP/SRT/RTMP/HLS relayed for every player |
 | Players | Windows, Android, webOS, Tizen, Linux, ChromeOS (some licensed) | Web player (any browser, TV, kiosk, PWA) | Android/Android TV (Rust core + WebView), Tizen/webOS packages, Raspberry Pi image |
 | Data | DataSets, tickers, RSS | Text/ticker/clock/weather/countdown/web/HTML widgets | DataSets & live feeds (RSS, Google Sheets, REST/JSON), menu boards |
 | Reporting | Proof of play, display stats | Device-side PoP synced offline, per day/content/screen, CSV | Audience analytics, uptime SLA, screenshots, alerts |
@@ -110,12 +111,19 @@ CMS, web player, pairing, layouts/zones, playlists/widgets, scheduling, triggers
 - "Require SSO" policy with a password emergency way in for owners and admins. Client secrets are encrypted with AES-256-GCM (`secret.key` / `QIVO_SECRET_KEY`, included in backups).
 - Tests: a fake OIDC provider inside the test suite (full flow, forged, expired, wrong-audience, wrong-nonce and replayed tokens, other domain, other organization), plus a browser run against an RS256 provider on a different site.
 
+**Phase 1.13 — built (v0.10): every media format and live IP streams** (customer requirement: JPEG, PNG, GIF, AVI, MPEG-2, H.264, VOB, MP3, PDF, IP video)
+- Upload pipeline: content sniffing → ffprobe → plan. Playable files are used as they are. Others (AVI, MPEG-2, VOB, MPEG-TS, WMV, FLV, MKV, HEVC, 10-bit, interlaced, >4K, AC-3/MP2 audio) are converted in the background to H.264/AAC MP4 (yadif deinterlacing, CRF 20, fast start), with live progress in the dashboard. Restart-safe, and screens only get ready media. TIFF → PNG.
+- PDF → one JPEG per page at 3840 px (poppler) and a page-by-page slideshow on screens (seconds per page set in the playlist).
+- ffmpeg hardening: file-only protocol whitelist, forced demuxer per sniffed type, playlist-like formats refused, stall timeout.
+- Live streams: RTSP / RTMP / SRT / UDP-multicast / HLS sources relayed on demand as HLS (`/api/live/<id>/<hmac token>/…`). H.264 is passed through, and H.265/MPEG-2 converted live. Relays stop 45 s after the last viewer, auto-reconnect with back-off, and segment numbers stay monotonic across restarts. The player uses hls.js (Apache-2.0, loaded only when needed) with a freeze watchdog. Sources are encrypted, with an SSRF guard (no loopback or link-local, optionally no private networks).
+- Tests: real ffmpeg conversion (AVI → H.264, held back until ready), PDF pages and deletion, UDP camera relayed with token checks. Verified in a browser against simulated H.264 and H.265 RTSP cameras and an MPEG-2 UDP channel. Docs in `MEDIA.md`.
+
 **Phase 2 — Production hardening (next 4–6 weeks)**
 - Postgres backend + S3/R2 media storage + signed URLs; Redis or Postgres LISTEN/NOTIFY so several server instances share the event bus
 - Per-screen timezone; holiday/exception dates; campaigns (ordered layout sets) and share-of-voice
 - Uptime history, offline alerts (email/Slack/WhatsApp). Screenshots from Windows players were built in v0.8.
 - Passkeys (WebAuthn) for passwordless, phishing-resistant sign-in; SAML 2.0 for universities without OpenID Connect; encrypt TOTP secrets at rest (same key as SSO secrets)
-- Server-side thumbnails + video transcoding (ffmpeg) and image resizing per screen resolution
+- Server-side thumbnails and image resizing per screen resolution (video conversion was built in v0.10); WebRTC for sub-second live latency
 - Browser end-to-end tests (Playwright) in CI
 
 **Phase 3 — Players everywhere**

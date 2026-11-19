@@ -78,6 +78,15 @@ pub fn open(sealed: &str) -> anyhow::Result<String> {
     Ok(String::from_utf8(plain.to_vec())?)
 }
 
+/// Keyed hash (HMAC-SHA256, hex) for capability tokens such as live-stream addresses:
+/// unguessable without the server's key, and checkable without storing anything.
+pub fn mac(data: &str) -> String {
+    let k = KEY.get().copied().unwrap_or([0u8; 32]);
+    let key = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, &k);
+    let tag = ring::hmac::sign(&key, format!("qivo-mac-v1|{data}").as_bytes());
+    hex::encode(tag.as_ref())
+}
+
 #[cfg(test)]
 mod tests {
     #[test]

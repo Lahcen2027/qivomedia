@@ -56,6 +56,20 @@ Controls are grouped by the [OWASP ASVS](https://owasp.org/www-project-applicati
 - **CSRF:** state-changing requests made with the cookie must come from the app's own origin, checked through `Origin` and Fetch Metadata. This sits on top of `SameSite=Strict`.
 - Cross-origin requests (CORS) aren't enabled. The website reaches the app through the same origin.
 
+### Media conversion and live streams (V5, V12)
+- Uploaded video, audio and PDF are processed by ffmpeg and poppler, which parse untrusted files. Each run:
+  - may only open local files (`-protocol_whitelist file,pipe`);
+  - has its demuxer **forced** to the format the upload was identified as, so a file can't pose as a playlist or concat list that pulls in other files from the server;
+  - is refused if the detected format is playlist-like;
+  - ignores subtitle and data streams;
+  - is killed if it stops making progress for 10 minutes.
+- Live-stream sources:
+  - Only streaming schemes are allowed (rtsp, rtmp, srt, udp, rtp, http(s)), and ffmpeg runs with a per-scheme protocol whitelist that never includes `file`.
+  - The host is resolved and refused if it points to loopback or link-local addresses (cloud metadata). With `QIVO_STREAM_ALLOW_PRIVATE=0`, private networks are refused as well (hosted SaaS).
+  - Sources are stored encrypted (they often contain camera passwords), and the dashboard shows them masked.
+  - Only admins can add or change streams.
+- Relayed streams are served at `/api/live/<id>/<token>/…`. The token is an HMAC of the stream with the server key, compared in constant time. File names are restricted to `index.m3u8` and `s<digits>.ts`.
+
 ### Logging (V7)
 The audit log records sign-ins (with IP address and browser), failed sign-ins, 2FA being turned on or off, recovery-code use, 2FA resets (by an admin, the platform operator or a server command, with who did it and why), session sign-outs, password changes, role changes and alerts. Admins see it under **Team & audit**.
 

@@ -11,8 +11,13 @@ const WIDGETS = {
   html: { icon: "</>", label: "HTML", def: { html: "<div style='color:#fff;font:700 80px system-ui;display:grid;place-items:center;height:100%'>Hello {{name}}</div>" } },
 };
 
-const totalSecs = (items, mediaById = {}) =>
-  items.reduce((s, it) => s + (it.type === "media" && mediaById[it.media_id]?.kind === "video" && it.play_full !== false && mediaById[it.media_id]?.duration_ms ? mediaById[it.media_id].duration_ms / 1000 : it.duration), 0);
+const pageSecs = (it) => Math.max(2, Number(it.page_duration) || 8);
+const itemSecs = (it, m) => {
+  if (it.type === "media" && m?.kind === "video" && it.play_full !== false && m.duration_ms) return m.duration_ms / 1000;
+  if (it.type === "media" && m?.pages?.length) return m.pages.length * pageSecs(it);
+  return it.duration;
+};
+const totalSecs = (items, mediaById = {}) => items.reduce((s, it) => s + itemSecs(it, mediaById[it.media_id]), 0);
 
 export async function render(root) {
   invalidate("playlists");
@@ -46,8 +51,9 @@ export async function render(root) {
 
 export async function edit(root, id) {
   invalidate("media");
-  const [pl, media] = await Promise.all([api(`/playlists/${id}`), load("media")]);
+  const [pl, media, streams] = await Promise.all([api(`/playlists/${id}`), load("media"), api("/streams").catch(() => [])]);
   const byId = Object.fromEntries(media.map((m) => [m.id, m]));
+  const streamById = Object.fromEntries(streams.map((s) => [s.id, s]));
   let items = pl.items;
   let sel = items[0]?.id || null;
   let dirty = false;
@@ -58,7 +64,7 @@ export async function edit(root, id) {
       <span class="muted small" data-total></span>${can.edit() ? `<button class="btn primary" data-save>Save</button>` : ""}</div></div>
     <div class="pl-wrap">
       <div>
-        ${can.edit() ? `<div class="addbar card" style="margin-bottom:12px;padding:10px"><button class="btn sm primary" data-add="media">+ Media</button>
+        ${can.edit() ? `<div class="addbar card" style="margin-bottom:12px;padding:10px"><button class="btn sm primary" data-add="media">+ Media</button><button class="btn sm" data-add="stream">● Live stream</button>
           ${Object.entries(WIDGETS).map(([k, w]) => `<button class="btn sm" data-add="${k}">${w.icon} ${w.label}</button>`).join("")}</div>` : ""}
         <div class="items"></div>
       </div>
@@ -70,14 +76,26 @@ export async function edit(root, id) {
   const mark = () => { dirty = true; page.querySelector("[data-save]")?.classList.add("primary"); updateTotal(); };
   const updateTotal = () => page.querySelector("[data-total]").textContent = `${items.length} items · ${fmtDur(totalSecs(items, byId))} loop`;
 
-  const label = (it) => it.type === "media" ? (byId[it.media_id]?.name || "Missing media") : (WIDGETS[it.type]?.label || it.type) + (it.text ? ` — ${it.text.slice(0, 40)}` : it.url ? ` — ${it.url}` : it.label ? ` — ${it.label}` : "");
+  const label = (it) => it.type === "stream" ? (streamById[it.stream_id]?.name || "Missing stream") : it.type === "media" ? (byId[it.media_id]?.name || "Missing media") : (WIDGETS[it.type]?.label || it.type) + (it.text ? ` — ${it.text.slice(0, 40)}` : it.url ? ` — ${it.url}` : it.label ? ` — ${it.label}` : "");
   const thumbOf = (it) => {
-    if (it.type !== "media") return `<div class="th" style="background:${esc(it.bg && it.bg !== "transparent" ? it.bg : "#1a2030")}">${WIDGETS[it.type]?.icon || "?"}</div>`;
+    if (it.type === "stream") return `<div class="th live-th">LIVE</div>`;
+    if (it.type !== "media") return `<div class="th" style=""background:${esc(it.bg && it.bg !== "transparent" ? it.bg : "#1a2030")}">${WIDGETS[it.type]?.icon || "?"}</div>`;
     const m = byId[it.media_id];
     if (m?.kind === "image") return `<div class="th"><img src="${m.url}"></div>`;
-    if (m?.kind === "video") return `<div class="th"><video src="${m.url}#t=1" muted preload="metadata"></video></div>`;
-    return `<div class="th">📄</div>`;
+    if (m?.kind === "video" && m.status === "ready") return `<div class="th"><video src="${m.url}#t=1" muted preload="metadata"></video></div>`;
+    if (m?.kind === "pdf" && m.pages?.length) return `<div class="th"><img src="${m.pages[0]}"></div>`;
+    return `<div class="th">${m?.status === "processing" ? "⏳" : "📄"}</div>`;
   };
+
+  function itemMeta(it) {
+    if (it.type === "stream") return `live stream · ${it.duration}s`;
+    if (it.type !== "media") return `widget · ${it.duration}s`;
+    const m = byId[it.media_id];
+    if (m?.status === "processing") return `${esc(m.kind)} · converting${m.progress ? ` ${m.progress}%` : ""}… (plays once ready)`;
+    if (m?.status === "failed") return `<span style="color:var(--bad)">conversion failed</span>`;
+    if (m?.pages?.length) return `PDF · ${m.pages.length} page${m.pages.length > 1 ? "s" : ""} × ${pageSecs(it)}s`;
+    return `${esc(m?.kind || "")} · ${m?.kind === "video" && it.play_full !== false ? "full length" : it.duration + "s"}`;
+  }
 
   function drawList() {
     list.innerHTML = items.length ? "" : `<div class="card empty"><h3>Empty playlist</h3><p>Add media or widgets above.</p></div>`;
@@ -85,7 +103,7 @@ export async function edit(root, id) {
       const row = h(`<div class="item ${it.id === sel ? "sel" : ""}" draggable="${can.edit()}" data-i="${i}">
         <span class="grip">⋮⋮</span>${thumbOf(it)}
         <div style="min-width:0"><div style="font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(label(it))}</div>
-        <div class="small muted">${it.type === "media" ? esc(byId[it.media_id]?.kind || "") : "widget"} · ${it.type === "media" && byId[it.media_id]?.kind === "video" && it.play_full !== false ? "full length" : it.duration + "s"}${it.when ? " · day-parted" : ""}</div></div>
+        <div class="small muted">${itemMeta(it)}${it.when ? " · day-parted" : ""}</div></div>
         ${can.edit() ? `<button class="btn sm ghost" data-rm title="Remove">✕</button>` : ""}</div>`);
       row.onclick = (e) => { if (e.target.closest("[data-rm]")) return; sel = it.id; drawList(); drawProps(); };
       row.querySelector("[data-rm]")?.addEventListener("click", () => { items.splice(i, 1); if (sel === it.id) sel = items[0]?.id; mark(); drawList(); drawProps(); });
@@ -118,11 +136,18 @@ export async function edit(root, id) {
     if (!it) { props.innerHTML = `<div class="muted">Select an item to edit its settings.</div>`; return; }
     const isVideo = it.type === "media" && byId[it.media_id]?.kind === "video";
     const w = it.when || {};
-    let f = `<h2 style="margin-bottom:14px">${esc(it.type === "media" ? "Media item" : WIDGETS[it.type]?.label)}</h2>`;
-    f += field("duration", isVideo && it.play_full !== false ? "Duration (s) — used if video can't report its length" : "Duration (seconds)", "number", 'min="0.5" step="0.5"');
+    const isPdf = it.type === "media" && byId[it.media_id]?.pages?.length;
+    let f = `<h2 style="margin-bottom:14px">${esc(it.type === "media" ? (isPdf ? "PDF document" : "Media item") : it.type === "stream" ? "Live stream" : WIDGETS[it.type]?.label)}</h2>`;
+    if (isPdf) f += field("page_duration", `Seconds per page (${byId[it.media_id].pages.length} pages)`, "number", 'min="2" step="1"');
+    else f += field("duration", isVideo && it.play_full !== false ? "Duration (s) — used if video can't report its length" : it.type === "stream" ? "Show for (seconds) — with only this item in the zone, it stays on" : "Duration (seconds)", "number", 'min="0.5" step="0.5"');
     if (it.type === "media") {
       f += field("fit", "Fit", "select:contain,cover,fill");
       if (isVideo) f += field("play_full", "Play full video length", "checkbox") + field("mute", "Muted", "checkbox");
+    }
+    if (it.type === "stream") {
+      const s = streamById[it.stream_id];
+      f += `<p class="small muted" style="margin-top:-4px">${s ? `${esc(s.source)}${s.video_codec ? ` · ${esc(s.video_codec)}${s.resolution ? " " + esc(s.resolution) : ""}` : ""}` : "This stream was deleted."}</p>`;
+      f += field("fit", "Fit", "select:contain,cover,fill") + field("mute", "Muted", "checkbox");
     }
     if (["text", "ticker"].includes(it.type)) f += field("text", "Text — use {{placeholders}} for trigger data", "textarea");
     if (it.type === "text") f += `<div class="fields2">${field("align", "Align", "select:left,center,right")}${field("bold", "Bold", "checkbox")}</div>`;
@@ -148,7 +173,7 @@ export async function edit(root, id) {
       it[k] = inp.type === "checkbox" ? inp.checked : inp.type === "number" ? parseFloat(inp.value) : inp.value;
       mark();
       const row = list.querySelector(`.item.sel`);
-      if (row && (k === "duration" || k === "text" || k === "play_full" || k === "label" || k === "url")) drawList();
+      if (row && (k === "duration" || k === "text" || k === "play_full" || k === "label" || k === "url" || k === "page_duration")) drawList();
     });
     const syncWhen = () => {
       if (!props.querySelector("[data-when-on]").checked) { delete it.when; mark(); drawList(); return; }
@@ -163,10 +188,17 @@ export async function edit(root, id) {
 
   page.querySelectorAll("[data-add]").forEach((b) => b.onclick = async () => {
     const t = b.dataset.add;
-    if (t === "media") {
+    if (t === "stream") {
+      if (!streams.length) { toast("No live streams yet: add cameras and channels in Media → Live streams", true, 7000); return; }
+      const s = await pickStream(streams);
+      if (!s) return;
+      const it = { id: crypto.randomUUID(), type: "stream", stream_id: s.id, duration: 60, fit: "contain", mute: true };
+      items.push(it); sel = it.id; mark();
+    } else if (t === "media") {
       const picked = await pickMedia();
       for (const m of picked) {
         const it = { id: crypto.randomUUID(), type: "media", media_id: m.id, duration: m.kind === "video" && m.duration_ms ? Math.ceil(m.duration_ms / 1000) : 10, fit: "contain", play_full: true, mute: true };
+        if (m.kind === "pdf") it.page_duration = 8;
         byId[m.id] = m; items.push(it); sel = it.id;
       }
       if (picked.length) mark();
@@ -185,4 +217,14 @@ export async function edit(root, id) {
   });
   window.onbeforeunload = () => (dirty && root.isConnected ? "unsaved" : undefined);
   updateTotal(); drawList(); drawProps();
+}
+
+function pickStream(streams) {
+  let chosen = null;
+  return modal({
+    title: "Add a live stream", submit: "Add",
+    body: `<div class="stack">${streams.map((s, i) => `<label class="chk card" style="padding:10px 12px;margin:0"><input type="radio" name="s" value="${esc(s.id)}" ${i === 0 ? "checked" : ""}>
+      <span><b>${esc(s.name)}</b><br><span class="small muted">${esc(s.source)}</span></span></label>`).join("")}</div>`,
+    onSubmit: (f) => { chosen = streams.find((s) => s.id === f.querySelector("input[name=s]:checked")?.value) || null; },
+  }).then((ok) => (ok ? chosen : null));
 }

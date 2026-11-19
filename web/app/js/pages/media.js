@@ -1,11 +1,18 @@
 import { api, h, esc, fmtBytes, fmtDur, modal, confirmDialog, guard, load, invalidate, can, store, toast } from "../core.js";
+import { streamsSection } from "./streams.js";
 
 export function thumb(m) {
   if (!m) return `<div class="thumb">missing</div>`;
+  if (m.status === "processing") return `<div class="thumb converting"><div><div class="spin"></div><b data-pct>${m.progress ? m.progress + "%" : "Converting…"}</b><div class="small">making it playable on every screen</div></div></div>`;
+  if (m.status === "failed") return `<div class="thumb failed" title="${esc(m.error || "")}"><div><b>Conversion failed</b><div class="small">${esc((m.error || "").slice(0, 90))}</div></div></div>`;
   if (m.kind === "image") return `<div class="thumb"><img loading="lazy" src="${m.url}" alt=""></div>`;
   if (m.kind === "video") return `<div class="thumb"><video src="${m.url}#t=1" muted preload="metadata"></video></div>`;
+  if (m.kind === "pdf" && m.pages?.length) return `<div class="thumb"><img class="page" loading="lazy" src="${m.pages[0]}" alt=""><span class="thumb-badge">${m.pages.length} page${m.pages.length > 1 ? "s" : ""}</span></div>`;
+  if (m.kind === "audio") return `<div class="thumb">♪ audio</div>`;
   return `<div class="thumb">${esc(m.kind)}</div>`;
 }
+
+const res = (m) => m.width && m.height ? ` · ${m.width}×${m.height}${Math.max(m.width, m.height) >= 3840 ? " (4K)" : ""}` : "";
 
 function videoDuration(file) {
   return new Promise((res) => {
@@ -42,15 +49,18 @@ export async function render(root) {
   const media = await load("media");
   let filter = "all", q = "";
   const page = h(`<div>
-    <div class="head"><div><h1>Media library</h1><p>Images, video, audio, PDF and HTML. Files are de-duplicated and cached on screens for offline playback.</p></div>
-      ${can.edit() ? `<label class="btn primary" style="margin:0">+ Upload<input type="file" multiple hidden></label>` : ""}</div>
+    <div class="head"><div><h1>Media library</h1><p>Images, video, audio, PDF and HTML. Formats screens can't play (AVI, MPEG-2, VOB, WMV, HEVC…) are converted automatically, and PDFs become page-by-page slides.</p></div>
+      ${can.edit() ? `<label class="btn primary" style="margin:0" data-upload-btn>+ Upload<input type="file" multiple hidden></label>` : ""}</div>
+    <div class="tabs" style="margin-bottom:14px"><a data-view="files" class="active">Files</a><a data-view="live">● Live streams</a></div>
+    <div data-live-slot hidden></div>
+    <div data-files>
     ${can.edit() ? `<div class="drop">Drop files here to upload</div><div class="uploads stack" style="margin-bottom:14px"></div>` : ""}
     <div class="row" style="margin-bottom:14px">
       <input placeholder="Search…" style="max-width:260px" data-q>
       <div class="tabs" style="margin:0;border:0">${["all", "image", "video", "audio", "pdf", "html", "other"].map((k) => `<a data-k="${k}" class="${k === "all" ? "active" : ""}">${k}</a>`).join("")}</div>
     </div>
     <div class="media-grid"></div>
-  </div>`);
+  </div></div>`);
   root.appendChild(page);
   const grid = page.querySelector(".media-grid");
 
@@ -58,9 +68,10 @@ export async function render(root) {
     const list = media.filter((m) => (filter === "all" || m.kind === filter) && m.name.toLowerCase().includes(q));
     grid.innerHTML = list.length ? "" : `<div class="empty" style="grid-column:1/-1"><h3>${media.length ? "No matches" : "Your library is empty"}</h3><p>${media.length ? "" : "Drag files in to get started."}</p></div>`;
     for (const m of list) {
-      const t = h(`<div class="tile">${thumb(m)}
+      const t = h(`<div class="tile" data-mid="${esc(m.id)}">${thumb(m)}
         <div class="meta"><div class="name" title="${esc(m.name)}">${esc(m.name)}</div>
-        <div class="small muted">${esc(m.kind)} · ${fmtBytes(m.size)}${m.duration_ms ? " · " + fmtDur(m.duration_ms / 1000) : ""}</div></div>
+        <div class="small muted">${esc(m.kind)} · ${fmtBytes(m.size)}${m.duration_ms ? " · " + fmtDur(m.duration_ms / 1000) : ""}${res(m)}</div>
+        ${m.error && m.status === "ready" ? `<div class="small" style="color:var(--warn)">${esc(m.error)}</div>` : ""}</div>
         ${can.edit() ? `<div class="acts"><button class="btn sm" data-r>Rename</button><button class="btn sm danger" data-d>✕</button></div>` : ""}</div>`);
       t.querySelector("[data-r]")?.addEventListener("click", () => modal({
         title: "Rename media", body: `<div class="field"><label>Name</label><input name="name" value="${esc(m.name)}"></div>`,
@@ -75,6 +86,39 @@ export async function render(root) {
     }
   };
   draw();
+
+  // Conversion progress, live from the server.
+  const onLive = async (e) => {
+    const d = e.detail;
+    if (d.type !== "media_progress") return;
+    if (!page.isConnected) return window.removeEventListener("qivo:live", onLive);
+    const m = media.find((x) => x.id === d.id);
+    if (!m) return;
+    if (d.status === "processing") {
+      m.progress = d.progress;
+      const pct = grid.querySelector(`[data-mid="${m.id}"] [data-pct]`);
+      if (pct) pct.textContent = `${d.progress}%`;
+      return;
+    }
+    invalidate("media");
+    const fresh = (await api("/media")).find((x) => x.id === d.id);
+    if (fresh) Object.assign(m, fresh);
+    draw();
+    if (d.status === "ready") toast(`${m.name} is ready to play`);
+    else toast(`${m.name}: conversion failed`, true, 8000);
+  };
+  window.addEventListener("qivo:live", onLive);
+
+  page.querySelectorAll("[data-view]").forEach((a) => a.onclick = () => {
+    page.querySelectorAll("[data-view]").forEach((x) => x.classList.toggle("active", x === a));
+    const live = a.dataset.view === "live";
+    page.querySelector("[data-files]").hidden = live;
+    page.querySelector("[data-live-slot]").hidden = !live;
+    const up = page.querySelector("[data-upload-btn]");
+    if (up) up.style.display = live ? "none" : "";
+    if (live) streamsSection(page.querySelector("[data-live-slot]")).catch((err) => toast(err.message, true));
+  });
+  if (location.hash.includes("live")) page.querySelector('[data-view="live"]').click();
 
   page.querySelector("[data-q]").oninput = (e) => { q = e.target.value.toLowerCase(); draw(); };
   page.querySelectorAll("[data-k]").forEach((a) => a.onclick = () => {
@@ -113,9 +157,10 @@ export async function render(root) {
 /** Media picker used by the playlist editor. Resolves to an array of media. */
 export async function pickMedia() {
   invalidate("media");
-  const media = await load("media");
+  // Items still converting can be added (they start playing once ready); failed ones can't.
+  const media = (await load("media")).filter((m) => m.status !== "failed");
   const chosen = new Set();
-  const body = h(`<div><div class="media-grid">${media.length ? media.map((m) => `<div class="tile pick" data-id="${m.id}">${thumb(m)}<div class="meta"><div class="name">${esc(m.name)}</div><div class="small muted">${m.kind}</div></div></div>`).join("") : `<div class="empty" style="grid-column:1/-1">No media yet — upload some in the Media library.</div>`}</div></div>`);
+  const body = h(`<div><div class="media-grid">${media.length ? media.map((m) => `<div class="tile pick" data-id="${m.id}">${thumb(m)}<div class="meta"><div class="name">${esc(m.name)}</div><div class="small muted">${m.kind}${m.status === "processing" ? " · converting" : m.pages?.length ? ` · ${m.pages.length} pages` : ""}</div></div></div>`).join("") : `<div class="empty" style="grid-column:1/-1">No media yet — upload some in the Media library.</div>`}</div></div>`);
   body.querySelectorAll(".tile").forEach((t) => t.onclick = () => {
     const id = t.dataset.id;
     chosen.has(id) ? chosen.delete(id) : chosen.add(id);
