@@ -27,7 +27,7 @@ tokio-util = { version = "0.7", features = ["io"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1", "tokio1-rustls", "rustls-platform-verifier", "ring", "hostname"] }
 totp-rs = { version = "5", features = ["otpauth", "gen_secret", "qr"] }
-infer = "0.19"
+infer = "0.22"
 sha1_smol = "1"
 cookie = "0.18"
 base64 = "0.22"
