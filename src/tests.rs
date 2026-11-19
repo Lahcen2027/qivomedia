@@ -319,7 +319,10 @@ async fn two_factor_enrollment_login_replay_and_recovery() {
     assert!(setup["qr_png_base64"].as_str().unwrap().len() > 100);
     let secret = setup["secret"].as_str().unwrap().to_string();
     assert_eq!(t.req("POST", "/api/auth/mfa/enable", Some(&tok), Some(json!({ "code": "000000" }))).await.0, StatusCode::BAD_REQUEST);
-    let (s, en) = t.req("POST", "/api/auth/mfa/enable", Some(&tok), Some(json!({ "code": totp_code(&secret, unix_now()) }))).await;
+    // One timestamp for the whole test, so a 30-second boundary passing mid-test can't make the
+    // "replayed" code below a fresh one.
+    let t0 = unix_now();
+    let (s, en) = t.req("POST", "/api/auth/mfa/enable", Some(&tok), Some(json!({ "code": totp_code(&secret, t0) }))).await;
     assert_eq!(s, StatusCode::OK, "{en}");
     let codes: Vec<String> = serde_json::from_value(en["recovery_codes"].clone()).unwrap();
     assert_eq!(codes.len(), 10);
@@ -331,10 +334,10 @@ async fn two_factor_enrollment_login_replay_and_recovery() {
     assert!(sess.is_none(), "no session before the second factor");
     let ticket = l["ticket"].as_str().unwrap().to_string();
     // The enable step already used the current time step: the same code is a replay.
-    let replay = totp_code(&secret, unix_now());
+    let replay = totp_code(&secret, t0);
     assert_eq!(t.req("POST", "/api/auth/mfa/verify", None, Some(json!({ "ticket": ticket, "code": replay }))).await.0, StatusCode::BAD_REQUEST);
     // Next step's code (within allowed drift) works.
-    let (s, _, sess) = t.req_full("POST", "/api/auth/mfa/verify", None, Some(json!({ "ticket": ticket, "code": totp_code(&secret, unix_now() + 30) })), &[]).await;
+    let (s, _, sess) = t.req_full("POST", "/api/auth/mfa/verify", None, Some(json!({ "ticket": ticket, "code": totp_code(&secret, t0 + 30) })), &[]).await;
     assert_eq!(s, StatusCode::OK);
     assert!(sess.is_some());
     // Ticket is single-use.

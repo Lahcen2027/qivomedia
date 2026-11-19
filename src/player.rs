@@ -152,7 +152,7 @@ async fn load_bundle(state: &AppState, org: &str, layout_ids: &BTreeSet<String>)
     }
     let mut media = BTreeMap::new();
     for mid in &media_ids {
-        let m: Option<Media> = sqlx::query_as(&format!("SELECT {MEDIA_COLS} FROM media WHERE id = ? AND org_id = ? AND status = 'ready'"))
+        let m: Option<Media> = sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT {MEDIA_COLS} FROM media WHERE id = ? AND org_id = ? AND status = 'ready'")))
             .bind(mid)
             .bind(org)
             .fetch_optional(&state.db)
@@ -171,14 +171,14 @@ async fn load_bundle(state: &AppState, org: &str, layout_ids: &BTreeSet<String>)
 
 pub async fn build_manifest(state: &AppState, d: &Device) -> AppResult<Value> {
     let org = d.org_id.as_deref().unwrap_or_default();
-    let schedules: Vec<Schedule> = sqlx::query_as(&format!(
+    let schedules: Vec<Schedule> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {SCHED_COLS} FROM schedules
           WHERE org_id = ? AND enabled = 1
             AND (target_type = 'all'
                  OR (target_type = 'group' AND target_id = ?)
                  OR (target_type = 'display' AND target_id = ?))
           ORDER BY priority DESC, created_at"
-    ))
+    )))
     .bind(org)
     .bind(&d.group_id)
     .bind(&d.id)

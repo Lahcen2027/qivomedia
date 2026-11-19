@@ -70,6 +70,9 @@ Controls are grouped by the [OWASP ASVS](https://owasp.org/www-project-applicati
   - Only admins can add or change streams.
 - Relayed streams are served at `/api/live/<id>/<token>/…`. The token is an HMAC of the stream with the server key, compared in constant time. File names are restricted to `index.m3u8` and `s<digits>.ts`.
 
+### SQL (V5)
+- Every value goes into queries as a bound parameter. The only SQL text built at run time inserts constant column lists (`*_COLS`) defined in the code. sqlx 0.9 refuses any other dynamic SQL unless it is explicitly marked `AssertSqlSafe` after review, so a new string-built query can't slip in unnoticed.
+
 ### Logging (V7)
 The audit log records sign-ins (with IP address and browser), failed sign-ins, 2FA being turned on or off, recovery-code use, 2FA resets (by an admin, the platform operator or a server command, with who did it and why), session sign-outs, password changes, role changes and alerts. Admins see it under **Team & audit**.
 

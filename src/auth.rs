@@ -322,7 +322,7 @@ async fn me(State(state): State<AppState>, user: AuthUser) -> AppResult<Json<Val
 
 async fn list_users(State(state): State<AppState>, user: AuthUser) -> AppResult<Json<Vec<User>>> {
     let users = sqlx::query_as::<_, User>(
-        &format!("SELECT {USER_COLS} FROM users WHERE org_id = ? ORDER BY created_at"),
+        sqlx::AssertSqlSafe(format!("SELECT {USER_COLS} FROM users WHERE org_id = ? ORDER BY created_at")),
     )
     .bind(user.org())
     .fetch_all(&state.db)
@@ -383,7 +383,7 @@ async fn create_user(State(state): State<AppState>, headers: HeaderMap, user: Au
                 mail::esc(&user.0.name), mail::esc(&org_name), mail::button(&link, "Choose my password")),
         );
     }
-    let u = sqlx::query_as::<_, User>(&format!("SELECT {USER_COLS} FROM users WHERE id = ?"))
+    let u = sqlx::query_as::<_, User>(sqlx::AssertSqlSafe(format!("SELECT {USER_COLS} FROM users WHERE id = ?")))
         .bind(&id)
         .fetch_one(&state.db)
         .await?;

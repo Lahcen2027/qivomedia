@@ -113,11 +113,11 @@ const COLS: &str = "id, kind, color, lines, target_type, target_id, test, sound,
 
 /// Active alerts that apply to one screen (used by the player manifest).
 pub async fn active_for_display(state: &AppState, org: &str, display_id: &str, group_id: Option<&str>) -> AppResult<Vec<Value>> {
-    let rows: Vec<Alert> = sqlx::query_as(&format!(
+    let rows: Vec<Alert> = sqlx::query_as(sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM alerts WHERE org_id = ? AND cleared_at IS NULL
             AND (target_type = 'all' OR (target_type = 'group' AND target_id = ?) OR (target_type = 'display' AND target_id = ?))
           ORDER BY started_at DESC"
-    ))
+    )))
     .bind(org)
     .bind(group_id)
     .bind(display_id)
@@ -153,7 +153,7 @@ async fn do_start(state: &AppState, org: &str, a: NewAlert) -> AppResult<Value> 
     .bind(&a.external_id).bind(&a.started_by).bind(now())
     .execute(&state.db)
     .await?;
-    let alert: Alert = sqlx::query_as(&format!("SELECT {COLS} FROM alerts WHERE id = ?")).bind(&id).fetch_one(&state.db).await?;
+    let alert: Alert = sqlx::query_as(sqlx::AssertSqlSafe(format!("SELECT {COLS} FROM alerts WHERE id = ?"))).bind(&id).fetch_one(&state.db).await?;
     let j = alert.to_json();
     let screens = resolve_targets(state, org, &a.target_type, a.target_id.as_deref()).await?;
     let n = screens.len();
@@ -204,7 +204,7 @@ async fn list(State(state): State<AppState>, user: AuthUser, Query(q): Query<Lis
     } else {
         format!("SELECT {COLS} FROM alerts WHERE org_id = ? ORDER BY started_at DESC LIMIT 50")
     };
-    let rows: Vec<Alert> = sqlx::query_as(&sql).bind(user.org()).fetch_all(&state.db).await?;
+    let rows: Vec<Alert> = sqlx::query_as(sqlx::AssertSqlSafe(sql)).bind(user.org()).fetch_all(&state.db).await?;
     Ok(Json(rows.iter().map(Alert::to_json).collect()))
 }
 

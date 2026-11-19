@@ -103,7 +103,7 @@ async fn validate(state: &AppState, org: &str, mut r: Req) -> AppResult<Req> {
 }
 
 async fn fetch(state: &AppState, org: &str, id: &str) -> AppResult<Schedule> {
-    sqlx::query_as::<_, Schedule>(&format!("SELECT {SCHED_COLS} FROM schedules WHERE id = ? AND org_id = ?"))
+    sqlx::query_as::<_, Schedule>(sqlx::AssertSqlSafe(format!("SELECT {SCHED_COLS} FROM schedules WHERE id = ? AND org_id = ?")))
         .bind(id)
         .bind(org)
         .fetch_optional(&state.db)
@@ -112,9 +112,9 @@ async fn fetch(state: &AppState, org: &str, id: &str) -> AppResult<Schedule> {
 }
 
 async fn list(State(state): State<AppState>, user: AuthUser) -> AppResult<Json<Vec<Schedule>>> {
-    let rows = sqlx::query_as::<_, Schedule>(&format!(
+    let rows = sqlx::query_as::<_, Schedule>(sqlx::AssertSqlSafe(format!(
         "SELECT {SCHED_COLS} FROM schedules WHERE org_id = ? ORDER BY priority DESC, name"
-    ))
+    )))
     .bind(user.org())
     .fetch_all(&state.db)
     .await?;

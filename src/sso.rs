@@ -172,7 +172,7 @@ fn split_domains(s: &str) -> Vec<String> {
 }
 
 async fn provider(state: &AppState, id: &str) -> AppResult<Provider> {
-    sqlx::query_as::<_, Provider>(&format!("SELECT {PROVIDER_COLS} FROM sso_providers WHERE id = ?"))
+    sqlx::query_as::<_, Provider>(sqlx::AssertSqlSafe(format!("SELECT {PROVIDER_COLS} FROM sso_providers WHERE id = ?")))
         .bind(id)
         .fetch_optional(&state.db)
         .await?
@@ -565,7 +565,7 @@ async fn resolve_user(state: &AppState, p: &Provider, c: &Claims, email: &str) -
 
 async fn list(State(state): State<AppState>, headers: HeaderMap, user: AuthUser) -> AppResult<Json<Value>> {
     user.require_admin()?;
-    let rows = sqlx::query_as::<_, Provider>(&format!("SELECT {PROVIDER_COLS} FROM sso_providers WHERE org_id = ? ORDER BY created_at"))
+    let rows = sqlx::query_as::<_, Provider>(sqlx::AssertSqlSafe(format!("SELECT {PROVIDER_COLS} FROM sso_providers WHERE org_id = ? ORDER BY created_at")))
         .bind(user.org())
         .fetch_all(&state.db)
         .await?;

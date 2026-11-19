@@ -68,7 +68,7 @@ async fn validate(state: &AppState, org: &str, mut r: Req) -> AppResult<Req> {
 }
 
 async fn list(State(state): State<AppState>, user: AuthUser) -> AppResult<Json<Vec<Trigger>>> {
-    let rows = sqlx::query_as::<_, Trigger>(&format!("SELECT {COLS} FROM triggers WHERE org_id = ? ORDER BY name"))
+    let rows = sqlx::query_as::<_, Trigger>(sqlx::AssertSqlSafe(format!("SELECT {COLS} FROM triggers WHERE org_id = ? ORDER BY name")))
         .bind(user.org())
         .fetch_all(&state.db)
         .await?;
@@ -76,7 +76,7 @@ async fn list(State(state): State<AppState>, user: AuthUser) -> AppResult<Json<V
 }
 
 async fn get_one(state: &AppState, org: &str, id: &str) -> AppResult<Trigger> {
-    sqlx::query_as::<_, Trigger>(&format!("SELECT {COLS} FROM triggers WHERE id = ? AND org_id = ?"))
+    sqlx::query_as::<_, Trigger>(sqlx::AssertSqlSafe(format!("SELECT {COLS} FROM triggers WHERE id = ? AND org_id = ?")))
         .bind(id)
         .bind(org)
         .fetch_optional(&state.db)
@@ -88,9 +88,9 @@ async fn create(State(state): State<AppState>, user: AuthUser, Json(req): Json<R
     user.require_editor()?;
     let r = validate(&state, user.org(), req).await?;
     let id = new_id();
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "INSERT INTO triggers ({COLS}) VALUES (?,?,?,?,?,?,?,?,NULL,?)"
-    ))
+    )))
     .bind(&id)
     .bind(user.org())
     .bind(r.name.trim())
@@ -164,7 +164,7 @@ async fn fire_hook(State(state): State<AppState>, Path(key): Path<String>, body:
     if !crate::ratelimit::allow(&format!("hook:{key}"), 120, crate::ratelimit::MIN) {
         return Err(AppError::TooMany("trigger fired too often — max 120 per minute".into()));
     }
-    let t = sqlx::query_as::<_, Trigger>(&format!("SELECT {COLS} FROM triggers WHERE hook_key = ?"))
+    let t = sqlx::query_as::<_, Trigger>(sqlx::AssertSqlSafe(format!("SELECT {COLS} FROM triggers WHERE hook_key = ?")))
         .bind(&key)
         .fetch_optional(&state.db)
         .await?

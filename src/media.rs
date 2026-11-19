@@ -89,9 +89,9 @@ fn safe_ext(name: &str) -> String {
 }
 
 async fn list(State(state): State<AppState>, user: AuthUser) -> AppResult<Json<Vec<Value>>> {
-    let rows = sqlx::query_as::<_, Media>(&format!(
+    let rows = sqlx::query_as::<_, Media>(sqlx::AssertSqlSafe(format!(
         "SELECT {MEDIA_COLS} FROM media WHERE org_id = ? ORDER BY created_at DESC"
-    ))
+    )))
     .bind(user.org())
     .fetch_all(&state.db)
     .await?;
@@ -201,7 +201,7 @@ async fn upload(State(state): State<AppState>, user: AuthUser, mut mp: Multipart
             .await?;
             audit(&state, user.org(), Some(&user.0.id), "media.uploaded", &format!("{orig} (converting)")).await;
             crate::mediaproc::enqueue(&state, &id);
-            let m = sqlx::query_as::<_, Media>(&format!("SELECT {MEDIA_COLS} FROM media WHERE id = ?")).bind(&id).fetch_one(&state.db).await?;
+            let m = sqlx::query_as::<_, Media>(sqlx::AssertSqlSafe(format!("SELECT {MEDIA_COLS} FROM media WHERE id = ?"))).bind(&id).fetch_one(&state.db).await?;
             created.push(m.to_json());
             continue;
         }
@@ -233,7 +233,7 @@ async fn upload(State(state): State<AppState>, user: AuthUser, mut mp: Multipart
         .execute(&state.db)
         .await?;
         audit(&state, user.org(), Some(&user.0.id), "media.uploaded", &orig).await;
-        let m = sqlx::query_as::<_, Media>(&format!("SELECT {MEDIA_COLS} FROM media WHERE id = ?"))
+        let m = sqlx::query_as::<_, Media>(sqlx::AssertSqlSafe(format!("SELECT {MEDIA_COLS} FROM media WHERE id = ?")))
             .bind(&id)
             .fetch_one(&state.db)
             .await?;
@@ -259,7 +259,7 @@ async fn update(
     Json(req): Json<UpdateReq>,
 ) -> AppResult<Json<Value>> {
     user.require_editor()?;
-    let m = sqlx::query_as::<_, Media>(&format!("SELECT {MEDIA_COLS} FROM media WHERE id = ? AND org_id = ?"))
+    let m = sqlx::query_as::<_, Media>(sqlx::AssertSqlSafe(format!("SELECT {MEDIA_COLS} FROM media WHERE id = ? AND org_id = ?")))
         .bind(&id)
         .bind(user.org())
         .fetch_optional(&state.db)
@@ -276,7 +276,7 @@ async fn update(
         .execute(&state.db)
         .await?;
     state.content_changed(user.org());
-    let m = sqlx::query_as::<_, Media>(&format!("SELECT {MEDIA_COLS} FROM media WHERE id = ?"))
+    let m = sqlx::query_as::<_, Media>(sqlx::AssertSqlSafe(format!("SELECT {MEDIA_COLS} FROM media WHERE id = ?")))
         .bind(&id)
         .fetch_one(&state.db)
         .await?;
@@ -285,7 +285,7 @@ async fn update(
 
 async fn remove(State(state): State<AppState>, user: AuthUser, Path(id): Path<String>) -> AppResult<Json<Value>> {
     user.require_editor()?;
-    let m = sqlx::query_as::<_, Media>(&format!("SELECT {MEDIA_COLS} FROM media WHERE id = ? AND org_id = ?"))
+    let m = sqlx::query_as::<_, Media>(sqlx::AssertSqlSafe(format!("SELECT {MEDIA_COLS} FROM media WHERE id = ? AND org_id = ?")))
         .bind(&id)
         .bind(user.org())
         .fetch_optional(&state.db)

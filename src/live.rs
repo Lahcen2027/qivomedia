@@ -215,7 +215,7 @@ impl Stream {
 pub async fn manifest_entries(state: &AppState, org: &str, ids: &[String]) -> AppResult<Vec<(String, Value)>> {
     let mut out = vec![];
     for id in ids {
-        if let Some(s) = sqlx::query_as::<_, Stream>(&format!("SELECT {COLS} FROM streams WHERE id = ? AND org_id = ?")).bind(id).bind(org).fetch_optional(&state.db).await? {
+        if let Some(s) = sqlx::query_as::<_, Stream>(sqlx::AssertSqlSafe(format!("SELECT {COLS} FROM streams WHERE id = ? AND org_id = ?"))).bind(id).bind(org).fetch_optional(&state.db).await? {
             out.push((s.id.clone(), json!({ "id": s.id, "kind": "stream", "name": s.name, "url": play_url(&s) })));
         }
     }
@@ -223,11 +223,11 @@ pub async fn manifest_entries(state: &AppState, org: &str, ids: &[String]) -> Ap
 }
 
 async fn get_stream(state: &AppState, id: &str) -> AppResult<Stream> {
-    sqlx::query_as::<_, Stream>(&format!("SELECT {COLS} FROM streams WHERE id = ?")).bind(id).fetch_optional(&state.db).await?.ok_or(AppError::NotFound)
+    sqlx::query_as::<_, Stream>(sqlx::AssertSqlSafe(format!("SELECT {COLS} FROM streams WHERE id = ?"))).bind(id).fetch_optional(&state.db).await?.ok_or(AppError::NotFound)
 }
 
 async fn list(State(state): State<AppState>, user: AuthUser) -> AppResult<Json<Value>> {
-    let rows = sqlx::query_as::<_, Stream>(&format!("SELECT {COLS} FROM streams WHERE org_id = ? ORDER BY name")).bind(user.org()).fetch_all(&state.db).await?;
+    let rows = sqlx::query_as::<_, Stream>(sqlx::AssertSqlSafe(format!("SELECT {COLS} FROM streams WHERE org_id = ? ORDER BY name"))).bind(user.org()).fetch_all(&state.db).await?;
     Ok(Json(json!(rows.iter().map(Stream::public).collect::<Vec<_>>())))
 }
 

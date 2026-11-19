@@ -184,7 +184,7 @@ pub(crate) async fn normalize_regions(state: &AppState, org: &str, regions: &[Va
 const PL_COLS: &str = "id, name, items, shuffle, updated_at, origin";
 
 async fn fetch_playlist(state: &AppState, org: &str, id: &str) -> AppResult<Playlist> {
-    sqlx::query_as::<_, Playlist>(&format!("SELECT {PL_COLS} FROM playlists WHERE id = ? AND org_id = ?"))
+    sqlx::query_as::<_, Playlist>(sqlx::AssertSqlSafe(format!("SELECT {PL_COLS} FROM playlists WHERE id = ? AND org_id = ?")))
         .bind(id)
         .bind(org)
         .fetch_optional(&state.db)
@@ -193,7 +193,7 @@ async fn fetch_playlist(state: &AppState, org: &str, id: &str) -> AppResult<Play
 }
 
 async fn list_playlists(State(state): State<AppState>, user: AuthUser) -> AppResult<Json<Vec<Value>>> {
-    let rows = sqlx::query_as::<_, Playlist>(&format!("SELECT {PL_COLS} FROM playlists WHERE org_id = ? ORDER BY name"))
+    let rows = sqlx::query_as::<_, Playlist>(sqlx::AssertSqlSafe(format!("SELECT {PL_COLS} FROM playlists WHERE org_id = ? ORDER BY name")))
         .bind(user.org())
         .fetch_all(&state.db)
         .await?;
@@ -291,7 +291,7 @@ async fn duplicate_playlist(State(state): State<AppState>, user: AuthUser, Path(
 const LY_COLS: &str = "id, name, width, height, background, regions, updated_at, origin";
 
 pub async fn fetch_layout(state: &AppState, org: &str, id: &str) -> AppResult<Layout> {
-    sqlx::query_as::<_, Layout>(&format!("SELECT {LY_COLS} FROM layouts WHERE id = ? AND org_id = ?"))
+    sqlx::query_as::<_, Layout>(sqlx::AssertSqlSafe(format!("SELECT {LY_COLS} FROM layouts WHERE id = ? AND org_id = ?")))
         .bind(id)
         .bind(org)
         .fetch_optional(&state.db)
@@ -300,7 +300,7 @@ pub async fn fetch_layout(state: &AppState, org: &str, id: &str) -> AppResult<La
 }
 
 async fn list_layouts(State(state): State<AppState>, user: AuthUser) -> AppResult<Json<Vec<Value>>> {
-    let rows = sqlx::query_as::<_, Layout>(&format!("SELECT {LY_COLS} FROM layouts WHERE org_id = ? ORDER BY name"))
+    let rows = sqlx::query_as::<_, Layout>(sqlx::AssertSqlSafe(format!("SELECT {LY_COLS} FROM layouts WHERE org_id = ? ORDER BY name")))
         .bind(user.org())
         .fetch_all(&state.db)
         .await?;
