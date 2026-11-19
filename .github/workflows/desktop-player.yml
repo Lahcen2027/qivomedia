@@ -46,7 +46,7 @@ jobs:
           Copy-Item target/release/qivo-player.exe out/
           Copy-Item ../kiosk/setup-kiosk.ps1 out/
           Get-ChildItem out | Format-Table Name, Length
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: qivomedia-player-windows
           path: players/desktop/src-tauri/out/
@@ -90,7 +90,7 @@ jobs:
           cp target/release/bundle/appimage/*.AppImage out/ 2>/dev/null || true
           cp ../kiosk/setup-kiosk.sh out/
           ls -la out
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: qivomedia-player-linux
           path: players/desktop/src-tauri/out/
